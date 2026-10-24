@@ -253,19 +253,99 @@
       }
     });
   }
+  // CSV: Trennzeichen ; oder , automatisch, Anführungszeichen, UTF-8 mit/ohne BOM
+  function parseCsv(text) {
+    text = text.replace(/^﻿/, "").replace(/\r\n?/g, "\n");
+    const first = text.split("\n")[0];
+    const sep = (first.match(/;/g) || []).length >= (first.match(/,/g) || []).length ? ";" : ",";
+    const rows = []; let row = [], f = "", q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"' && text[i + 1] === '"') { f += '"'; i++; }
+        else if (c === '"') q = false;
+        else f += c;
+      } else if (c === '"') q = true;
+      else if (c === sep) { row.push(f); f = ""; }
+      else if (c === "\n") { row.push(f); rows.push(row); row = []; f = ""; }
+      else f += c;
+    }
+    if (f !== "" || row.length) { row.push(f); rows.push(row); }
+    return rows.filter(r => r.some(x => String(x).trim() !== ""));
+  }
+  const parsePreis = v => {
+    let s = String(v || "").replace(/[€\s]/g, "");
+    if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
+    return Math.round((parseFloat(s) || 0) * 100) / 100;
+  };
+  const csvCell = v => { const s = String(v ?? ""); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+
+  function importArtikel(file) {
+    const r = new FileReader();
+    r.onload = () => {
+      const rows = parseCsv(String(r.result));
+      if (rows.length < 2) return toast("CSV ist leer.", "err");
+      const head = rows[0].map(h => h.trim().toLowerCase());
+      const col = names => head.findIndex(h => names.includes(h));
+      const iNr = col(["artikelnummer", "art.-nr.", "nr"]), iTi = col(["bezeichnung", "title", "name"]),
+            iEh = col(["einheit"]), iPr = col(["preis", "preis (€)", "price"]), iBe = col(["beschreibung", "description"]);
+      if (iTi < 0 || iPr < 0) return toast("CSV braucht mindestens die Spalten Bezeichnung und Preis.", "err");
+      const daten = rows.slice(1).map(c => ({
+        Artikelnummer: iNr >= 0 ? (c[iNr] || "").trim() : "",
+        Title: (c[iTi] || "").trim(),
+        Einheit: iEh >= 0 ? (c[iEh] || "").trim() || "Stk." : "Stk.",
+        Preis: parsePreis(c[iPr]),
+        Beschreibung: iBe >= 0 ? (c[iBe] || "").trim() : ""
+      })).filter(d => d.Title);
+      const findEx = d => S.artikel.find(a => (d.Artikelnummer && a.Artikelnummer === d.Artikelnummer) || (!d.Artikelnummer && a.Title === d.Title));
+      const neu = daten.filter(d => !findEx(d)).length;
+      if (!confirm(`${daten.length} Artikel importieren?\n${neu} neu, ${daten.length - neu} werden aktualisiert (gleiche Artikelnummer).`)) return;
+      busy(async () => {
+        let n = 0;
+        for (const d of daten) {
+          const ex = findEx(d);
+          if (ex) { await G.update("Artikel", ex.id, d); Object.assign(ex, d); }
+          else S.artikel.push(await G.create("Artikel", d));
+          n++;
+          if (n % 5 === 0) toast(`Import … ${n}/${daten.length}`);
+        }
+        toast(`${n} Artikel importiert`); route();
+      });
+    };
+    r.readAsText(file, "utf-8");
+  }
+
+  function exportArtikel() {
+    const lines = [["Artikelnummer", "Bezeichnung", "Einheit", "Preis", "Beschreibung"].join(";")]
+      .concat(S.artikel.slice().sort((a, b) => String(a.Artikelnummer || "").localeCompare(String(b.Artikelnummer || ""), "de", { numeric: true }))
+        .map(a => [a.Artikelnummer, a.Title, a.Einheit, String(Number(a.Preis) || 0).replace(".", ","), a.Beschreibung].map(csvCell).join(";")));
+    const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `Artikel_${today()}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
   function artikelView() {
     view(`<div class="head"><h1>Artikel &amp; Leistungen</h1><span class="grow"></span><input id="q" class="search" placeholder="Suchen …">
-      <button class="btn primary" id="neu">+ Neuer Artikel</button></div>
-      <div class="card tblwrap"><table class="tbl"><thead><tr><th>Art.-Nr.</th><th>Bezeichnung</th><th>Einheit</th><th class="r">Preis</th></tr></thead><tbody id="tb"></tbody></table></div>`);
+      <button class="btn ghost" id="imp">CSV importieren</button><button class="btn ghost" id="exp">CSV exportieren</button>
+      <button class="btn primary" id="neu">+ Neuer Artikel</button><input type="file" id="impFile" accept=".csv,text/csv" class="hidden"></div>
+      <div class="card tblwrap"><table class="tbl"><thead><tr><th>Art.-Nr.</th><th>Bezeichnung</th><th>Einheit</th><th class="r">Preis</th></tr></thead><tbody id="tb"></tbody></table></div>
+      <p class="small muted">CSV-Spalten: Artikelnummer; Bezeichnung; Einheit; Preis; Beschreibung – gleiche Artikelnummer wird aktualisiert, neue werden angelegt.</p>`);
     const draw = () => {
       const q = $("#q").value.toLowerCase();
-      $("#tb").innerHTML = S.artikel.filter(a => !q || [a.Title, a.Artikelnummer, a.Beschreibung].join(" ").toLowerCase().includes(q)).sort(byTitle)
+      $("#tb").innerHTML = S.artikel.filter(a => !q || [a.Title, a.Artikelnummer, a.Beschreibung].join(" ").toLowerCase().includes(q))
+        .sort((a, b) => (!a.Artikelnummer - !b.Artikelnummer) || String(a.Artikelnummer || "").localeCompare(String(b.Artikelnummer || ""), "de", { numeric: true }) || byTitle(a, b))
         .map(a => `<tr data-id="${a.id}"><td>${esc(a.Artikelnummer)}</td><td><strong>${esc(a.Title)}</strong>${a.Beschreibung ? `<div class="small muted pre">${esc(a.Beschreibung)}</div>` : ""}</td>
           <td>${esc(a.Einheit)}</td><td class="r">${eur(a.Preis)}</td></tr>`).join("") || `<tr><td colspan="4" class="empty">Noch keine Artikel.</td></tr>`;
     };
     $("#q").oninput = draw; draw();
     $("#tb").onclick = e => { const tr = e.target.closest("tr[data-id]"); if (tr) artikelModal(S.artikel.find(a => a.id === tr.dataset.id)); };
     $("#neu").onclick = () => artikelModal(null);
+    $("#imp").onclick = () => $("#impFile").click();
+    $("#impFile").onchange = e => { const f = e.target.files[0]; if (f) importArtikel(f); e.target.value = ""; };
+    $("#exp").onclick = exportArtikel;
   }
 
   // ---------- Beleg-Editor ----------
