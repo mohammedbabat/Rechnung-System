@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ein-Facher Rechnungen</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/graph.js"></script>
+  <script src="js/pdf.js"></script>
+  <script src="js/app.js" defer></script>
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <div class="login-box">
+      <div class="brand big">ein<span>-</span>facher</div>
+      <p class="muted">Rechnungen &amp; Angebote</p>
+      <button id="loginBtn" class="btn primary">Mit Microsoft 365 anmelden</button>
+      <p id="loginMsg" class="small err-text"></p>
+    </div>
+  </div>
+
+  <div id="shell" class="shell hidden">
+    <aside class="sidebar">
+      <div class="brand">ein<span>-</span>facher<small>Rechnungen</small></div>
+      <nav>
+        <a href="#/dashboard" data-nav="dashboard">Übersicht</a>
+        <a href="#/rechnungen" data-nav="rechnungen">Rechnungen</a>
+        <a href="#/angebote" data-nav="angebote">Angebote</a>
+        <a href="#/kunden" data-nav="kunden">Kunden</a>
+        <a href="#/artikel" data-nav="artikel">Artikel</a>
+        <a href="#/einstellungen" data-nav="einstellungen">Einstellungen</a>
+      </nav>
+      <div class="user"><span id="userName"></span><button id="logoutBtn" class="link">Abmelden</button></div>
+    </aside>
+    <main id="view"></main>
+  </div>
+
+  <div id="modal" class="modal hidden"><div class="modal-box" id="modalBox"></div></div>
+  <div id="toast" class="toast"></div>
+  <div id="spinner" class="spinner"></div>
+</body>
+</html>
