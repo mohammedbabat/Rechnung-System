@@ -4,21 +4,22 @@
 (function () {
   "use strict";
   const C = window.EF_CONFIG;
-  const SCOPES = ["User.Read", "Sites.Manage.All", "Mail.Send", "Mail.Send.Shared"];
+  const SCOPES = ["User.Read", "User.ReadBasic.All", "Sites.Manage.All", "Mail.Send", "Mail.Send.Shared", "GroupMember.ReadWrite.All"];
   const GRAPH = "https://graph.microsoft.com/v1.0";
 
   // Datenmodell der SharePoint-Listen (Title-Spalte existiert immer)
   const SCHEMA = {
     Kunden: [["Kundennummer", "text"], ["Ansprechpartner", "text"], ["Strasse", "text"], ["PLZ", "text"], ["Ort", "text"],
              ["Land", "text"], ["Email", "text"], ["Telefon", "text"], ["Notiz", "note"]],
-    Artikel: [["Artikelnummer", "text"], ["Beschreibung", "note"], ["Einheit", "text"], ["Preis", "number"]],
+    Artikel: [["Artikelnummer", "text"], ["Kategorie", "text"], ["Beschreibung", "note"], ["Einheit", "text"], ["Preis", "number"]],
     Belege: [["Typ", "text"], ["Status", "text"], ["KundeId", "number"], ["KundeJson", "note"], ["Datum", "text"],
              ["Faellig", "text"], ["Leistungsdatum", "text"], ["Positionen", "note"], ["Summe", "number"], ["Notiz", "note"],
              ["BezugNr", "text"], ["BezahltAm", "text"], ["PdfUrl", "text"], ["Versendet", "text"]],
-    Einstellungen: [["Wert", "note"]]
+    Einstellungen: [["Wert", "note"]],
+    Benutzer: [["Name", "text"], ["EntraId", "text"], ["Rolle", "text"], ["Aktiv", "text"]]
   };
 
-  let msalApp = null, account = null, siteId = null;
+  let msalApp = null, account = null, siteId = null, groupId = C.groupId || null;
 
   function app() {
     if (!msalApp) {
@@ -115,19 +116,19 @@
     const existing = (await g(`/sites/${sid}/lists?$select=displayName`)).value.map(l => l.displayName);
     for (const [name, cols] of Object.entries(SCHEMA)) {
       const dn = C.listPrefix + name;
-      if (existing.includes(dn)) {
-        const have = (await g(`/sites/${sid}/lists/${L(name)}/columns`)).value.map(c => c.name);
-        for (const c of cols) {
-          if (!have.includes(c[0])) {
-            await g(`/sites/${sid}/lists/${L(name)}/columns`, { method: "POST", body: colDef(c) });
-            log(`+ Spalte ${c[0]} in ${dn} ergänzt`);
-          }
-        }
-        log(`✓ ${dn} vorhanden`);
-        continue;
+      if (!existing.includes(dn)) {
+        await g(`/sites/${sid}/lists`, { method: "POST", body: { displayName: dn, columns: cols.map(colDef), list: { template: "genericList" } } });
+        log(`+ ${dn} angelegt`);
       }
-      await g(`/sites/${sid}/lists`, { method: "POST", body: { displayName: dn, columns: cols.map(colDef), list: { template: "genericList" } } });
-      log(`+ ${dn} angelegt`);
+      // Spalten immer prüfen – auch direkt nach dem Anlegen
+      const have = (await g(`/sites/${sid}/lists/${L(name)}/columns`)).value.map(c => c.name);
+      for (const c of cols) {
+        if (!have.includes(c[0])) {
+          await g(`/sites/${sid}/lists/${L(name)}/columns`, { method: "POST", body: colDef(c) });
+          log(`+ Spalte ${c[0]} in ${dn} ergänzt`);
+        }
+      }
+      log(`✓ ${dn} vorhanden`);
     }
     log("Fertig.");
   }
@@ -157,5 +158,46 @@
     });
   }
 
-  window.EFGraph = { init, login, logout, account: () => account, items, create, update, remove, ensureLists, uploadPdf, sendMail };
+  // ---------- Entra ID: Benutzer und Site-Gruppe ----------
+  async function users() {
+    let url = "/users?$select=id,displayName,mail,userPrincipalName&$top=999";
+    const out = [];
+    while (url) {
+      const r = await g(url);
+      r.value.forEach(u => out.push(u));
+      url = r["@odata.nextLink"];
+    }
+    return out.sort((a, b) => String(a.displayName || "").localeCompare(String(b.displayName || ""), "de"));
+  }
+
+  // Microsoft-365-Gruppe hinter der SharePoint-Site (mailNickname = letzter Teil des Site-Pfads)
+  async function siteGroup() {
+    if (groupId) return groupId;
+    const nick = C.sitePath.split("/").filter(Boolean).pop();
+    const r = await g(`/groups?$filter=mailNickname eq '${nick.replace(/'/g, "''")}'&$select=id,displayName`);
+    if (!r.value.length) throw new Error(`Keine Microsoft-365-Gruppe „${nick}" gefunden`);
+    groupId = r.value[0].id;
+    return groupId;
+  }
+  async function addSiteMember(userId) {
+    const gid = await siteGroup();
+    try {
+      await g(`/groups/${gid}/members/$ref`, { method: "POST", body: { "@odata.id": `${GRAPH}/directoryObjects/${userId}` } });
+    } catch (e) {
+      if (!/already exist/i.test(e.message)) throw e;
+    }
+  }
+  async function removeSiteMember(userId) {
+    const gid = await siteGroup();
+    try {
+      await g(`/groups/${gid}/members/${userId}/$ref`, { method: "DELETE" });
+    } catch (e) {
+      if (!/404|does not exist|not found/i.test(e.message)) throw e;
+    }
+  }
+
+  window.EFGraph = {
+    init, login, logout, account: () => account, items, create, update, remove, ensureLists, uploadPdf, sendMail,
+    users, addSiteMember, removeSiteMember
+  };
 })();
