@@ -26,15 +26,12 @@
   <div id="shell" class="shell hidden">
     <aside class="sidebar">
       <div class="brand">ein<span>-</span>facher<small>Rechnungen</small></div>
-      <nav>
-        <a href="#/dashboard" data-nav="dashboard">Übersicht</a>
-        <a href="#/rechnungen" data-nav="rechnungen">Rechnungen</a>
-        <a href="#/angebote" data-nav="angebote">Angebote</a>
-        <a href="#/kunden" data-nav="kunden">Kunden</a>
-        <a href="#/artikel" data-nav="artikel">Artikel</a>
-        <a href="#/einstellungen" data-nav="einstellungen">Einstellungen</a>
-      </nav>
-      <div class="user"><span id="userName"></span><button id="logoutBtn" class="link">Abmelden</button></div>
+      <nav id="nav"></nav>
+      <div class="user">
+        <span id="userName"></span>
+        <span id="userRole" class="role"></span>
+        <button id="logoutBtn" class="link">Abmelden</button>
+      </div>
     </aside>
     <main id="view"></main>
   </div>
