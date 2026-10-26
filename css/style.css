@@ -39,7 +39,7 @@ h3 { font-size: 15px; margin: 0 0 12px; }
 
 /* Layout */
 .shell { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
-.sidebar { background: #0B3B37; padding: 22px 14px; display: flex; flex-direction: column; gap: 24px; position: sticky; top: 0; height: 100vh; }
+.sidebar { background: #0B3B37; padding: 22px 14px; display: flex; flex-direction: column; gap: 24px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
 .sidebar nav a { color: #CFE3E0; text-decoration: none; padding: 9px 12px; border-radius: 8px; }
 .sidebar nav a:hover { background: rgba(255,255,255,.07); }
@@ -103,7 +103,7 @@ textarea { resize: vertical; }
 .b-versendet { background: #EDE9FE; color: #5B21B6; }
 .b-bezahlt, .b-angenommen { background: #DCFCE7; color: #166534; }
 .b-ueberfaellig { background: #FEF3C7; color: #92400E; }
-.b-storniert, .b-abgelehnt { background: #FEE2E2; color: #991B1B; }
+.b-storniert, .b-abgelehnt, .b-storno { background: #FEE2E2; color: #991B1B; }
 
 /* KPIs */
 .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
@@ -128,7 +128,35 @@ body.busy .spinner { animation: load 1.2s ease-in-out infinite; }
 body.busy { cursor: progress; }
 @keyframes load { 0% { width: 0; left: 0; } 50% { width: 60%; left: 20%; } 100% { width: 0; left: 100%; } }
 
+/* Unterordner in der Navigation */
+.subnav { display: flex; flex-direction: column; gap: 1px; margin: 2px 0 8px; }
+.sidebar nav a.sub { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px 6px 26px; font-size: 13px; color: #A9CCC6; }
+.sidebar nav a.sub.active { background: rgba(255,255,255,.13); color: #fff; }
+.sidebar nav a.open:not(.active) { background: rgba(255,255,255,.07); color: #fff; }
+.cnt { font-size: 11px; min-width: 20px; text-align: center; padding: 1px 6px; border-radius: 99px; background: rgba(255,255,255,.1); }
+.cnt.warn { background: #B45309; color: #fff; }
+.tabs { display: none; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.tabs a { padding: 6px 12px; border-radius: 99px; border: 1px solid #CBD5D9; background: #fff; text-decoration: none; color: var(--text); font-size: 13px; }
+.tabs a.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sumline { text-align: right; margin: -6px 4px 16px; }
+
+/* Rollen und Benutzer */
+.role { display: inline-block; width: fit-content; font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; padding: 2px 8px; border-radius: 99px; background: rgba(255,255,255,.12); color: #CFE3E0; }
+.ulist { max-height: 320px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; margin: 10px 0 14px; }
+.ulist button { display: block; width: 100%; text-align: left; padding: 9px 12px; background: #fff; border: 0; border-bottom: 1px solid var(--line); cursor: pointer; font: inherit; }
+.ulist button:hover { background: #F4FAF9; }
+.ulist button:last-child { border-bottom: 0; }
+.matrix th, .matrix td { text-align: center; }
+.matrix th:first-child, .matrix td:first-child { text-align: left; }
+.tbl select { width: auto; padding: 5px 8px; }
+code { background: #EEF2F3; padding: 2px 6px; border-radius: 5px; font-size: 12px; word-break: break-all; }
+a.kpi { text-decoration: none; color: inherit; display: block; }
+a.kpi:hover { border-color: var(--accent); }
+.noaccess { max-width: 520px; margin: 60px auto; text-align: center; }
+
 @media (max-width: 860px) {
+  .subnav { display: none; }
+  .tabs { display: flex; }
   .shell { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 12px 16px; gap: 10px; }
   .sidebar nav { flex-direction: row; flex-wrap: wrap; }
