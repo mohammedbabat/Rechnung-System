@@ -14,7 +14,8 @@
     Artikel: [["Artikelnummer", "text"], ["Kategorie", "text"], ["Beschreibung", "note"], ["Einheit", "text"], ["Preis", "number"]],
     Belege: [["Typ", "text"], ["Status", "text"], ["KundeId", "number"], ["KundeJson", "note"], ["Datum", "text"],
              ["Faellig", "text"], ["Leistungsdatum", "text"], ["Positionen", "note"], ["Summe", "number"], ["Notiz", "note"],
-             ["BezugNr", "text"], ["BezahltAm", "text"], ["PdfUrl", "text"], ["Versendet", "text"]],
+             ["BezugNr", "text"], ["BezahltAm", "text"], ["PdfUrl", "text"], ["Versendet", "text"],
+             ["Firma", "text"], ["UstSatz", "number"]],
     Einstellungen: [["Wert", "note"]],
     Benutzer: [["Name", "text"], ["EntraId", "text"], ["Rolle", "text"], ["Aktiv", "text"]]
   };
@@ -133,14 +134,26 @@
     log("Fertig.");
   }
 
-  async function uploadPdf(folder, fileName, blob) {
+  // Liefert fehlende Spalten bestehender Listen, z. B. ["EF_Belege: Firma"] (fehlende Listen werfen itemNotFound)
+  async function checkSchema() {
     const sid = await site();
-    const p = [C.pdfFolder, folder, fileName].filter(Boolean).map(s => encodeURIComponent(s)).join("/");
+    const out = [];
+    for (const [name, cols] of Object.entries(SCHEMA)) {
+      const have = (await g(`/sites/${sid}/lists/${L(name)}/columns?$select=name`)).value.map(c => c.name);
+      cols.forEach(c => { if (!have.includes(c[0])) out.push(`${C.listPrefix}${name}: ${c[0]}`); });
+    }
+    return out;
+  }
+
+  async function uploadPdf(baseFolder, folder, fileName, blob) {
+    const sid = await site();
+    const p = [baseFolder || C.pdfFolder, folder, fileName].filter(Boolean).map(s => encodeURIComponent(s)).join("/");
     return g(`/sites/${sid}/drive/root:/${p}:/content`, { method: "PUT", body: blob, headers: { "Content-Type": "application/pdf" } });
   }
 
-  async function sendMail({ to, subject, html, attachments }) {
-    const path = C.mailFrom ? `/users/${encodeURIComponent(C.mailFrom)}/sendMail` : "/me/sendMail";
+  async function sendMail({ from, to, subject, html, attachments }) {
+    const sender = from || C.mailFrom;
+    const path = sender ? `/users/${encodeURIComponent(sender)}/sendMail` : "/me/sendMail";
     const toRecipients = to.split(/[;,]/).map(a => a.trim()).filter(Boolean).map(address => ({ emailAddress: { address } }));
     return g(path, {
       method: "POST",
@@ -197,7 +210,7 @@
   }
 
   window.EFGraph = {
-    init, login, logout, account: () => account, items, create, update, remove, ensureLists, uploadPdf, sendMail,
+    init, login, logout, account: () => account, items, create, update, remove, ensureLists, checkSchema, uploadPdf, sendMail,
     users, addSiteMember, removeSiteMember
   };
 })();

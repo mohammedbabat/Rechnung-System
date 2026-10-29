@@ -1,5 +1,6 @@
 // ============================================================
 // Ein-Facher Rechnungen – PDF-Erzeugung (pdfmake)
+// Unterstützt Kleinunternehmer (§ 19 UStG, UstSatz 0) und Regelbesteuerung (z. B. 19 %)
 // ============================================================
 (function (root) {
   "use strict";
@@ -8,18 +9,28 @@
   const eur = n => eurF.format(Number(n) || 0);
   const num = n => numF.format(Number(n) || 0);
   const dat = s => (s && /^\d{4}-\d{2}-\d{2}$/.test(s)) ? s.split("-").reverse().join(".") : (s || "");
-  const lineTotal = p => Math.round((Number(p.Menge) || 0) * (Number(p.Preis) || 0) * 100) / 100;
+  const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+  const lineTotal = p => r2((Number(p.Menge) || 0) * (Number(p.Preis) || 0));
   const titel = b => ({ Angebot: "Angebot", Storno: "Stornorechnung" })[b.Typ] || "Rechnung";
+
+  // Netto / USt / Brutto eines Belegs
+  function totals(b) {
+    const netto = r2((b.Positionen || []).reduce((a, p) => a + lineTotal(p), 0));
+    const satz = Number(b.UstSatz) || 0;
+    const ust = r2(netto * satz / 100);
+    return { netto, satz, ust, brutto: r2(netto + ust) };
+  }
 
   function build(b, f) {
     f = f || {};
     const k = b.Kunde || {};
     const pos = b.Positionen || [];
     const accent = f.Farbe || "#0F766E";
-    const total = Math.round(pos.reduce((a, p) => a + lineTotal(p), 0) * 100) / 100;
+    const t = totals(b);
+    const mitUst = t.satz > 0;
     const nr = b.Title || "ENTWURF";
     const ort = [f.PLZ, f.Ort].filter(Boolean).join(" ");
-    const absender = [f.Firma, f.Strasse, ort].filter(Boolean).join(" · ");
+    const absender = [f.Firma, f.Inhaber && f.Inhaber !== f.Firma ? "Inh. " + f.Inhaber : "", f.Strasse, ort].filter(Boolean).join(" · ");
     const empf = [k.Title, k.Ansprechpartner, k.Strasse, [k.PLZ, k.Ort].filter(Boolean).join(" "),
       (k.Land && !/^deutschland$/i.test(k.Land)) ? k.Land.toUpperCase() : ""].filter(Boolean);
 
@@ -32,8 +43,9 @@
 
     const head = [
       { text: "Pos.", style: "th" }, { text: "Beschreibung", style: "th" },
-      { text: "Menge", style: "th", alignment: "right" }, { text: "Einzelpreis", style: "th", alignment: "right" },
-      { text: "Gesamt", style: "th", alignment: "right" }
+      { text: "Menge", style: "th", alignment: "right" },
+      { text: mitUst ? "Einzelpreis netto" : "Einzelpreis", style: "th", alignment: "right" },
+      { text: mitUst ? "Gesamt netto" : "Gesamt", style: "th", alignment: "right" }
     ];
     const rows = pos.map((p, i) => [
       { text: String(i + 1), color: "#666" },
@@ -42,6 +54,15 @@
       { text: eur(p.Preis), alignment: "right", noWrap: true },
       { text: eur(lineTotal(p)), alignment: "right", noWrap: true }
     ]);
+
+    // Summenblock
+    const sumRows = [];
+    if (mitUst) {
+      sumRows.push([{ text: "Nettobetrag" }, { text: eur(t.netto), alignment: "right" }]);
+      sumRows.push([{ text: `zzgl. ${num(t.satz)} % USt` }, { text: eur(t.ust), alignment: "right" }]);
+    }
+    sumRows.push([{ text: "Gesamtbetrag", bold: true, fontSize: 11 }, { text: eur(t.brutto), bold: true, fontSize: 11, alignment: "right" }]);
+    const lastRow = sumRows.length - 1;
 
     const intro = b.Typ === "Angebot" ? "vielen Dank für Ihre Anfrage. Gerne unterbreiten wir Ihnen folgendes Angebot:"
       : b.Typ === "Storno" ? `hiermit stornieren wir die Rechnung ${b.BezugNr || ""} wie folgt:`
@@ -89,7 +110,7 @@
       { text: "Sehr geehrte Damen und Herren,", margin: [0, 0, 0, 4] },
       { text: intro, margin: [0, 0, 0, 12] },
       {
-        table: { headerRows: 1, widths: [24, "*", 62, 70, 72], body: [head].concat(rows) },
+        table: { headerRows: 1, widths: [24, "*", 62, 74, 74], body: [head].concat(rows) },
         layout: {
           hLineWidth: i => (i === 0 ? 0 : i === 1 ? 1 : 0.5),
           vLineWidth: () => 0,
@@ -101,15 +122,16 @@
       {
         columns: [
           { width: "*", text: "" },
-          { width: 230, table: { widths: ["*", "auto"], body: [[
-              { text: "Gesamtbetrag", bold: true, fontSize: 11 },
-              { text: eur(total), bold: true, fontSize: 11, alignment: "right" }]] },
-            layout: { hLineWidth: i => (i === 0 ? 1.5 : 0), vLineWidth: () => 0, hLineColor: () => accent, paddingTop: () => 6 } }
+          { width: 230, table: { widths: ["*", "auto"], body: sumRows },
+            layout: {
+              hLineWidth: i => (i === lastRow ? 1.5 : 0), vLineWidth: () => 0, hLineColor: () => accent,
+              paddingTop: i => (i === lastRow ? 6 : 2), paddingBottom: () => 2
+            } }
         ],
         margin: [0, 8, 0, 0]
       }
     ];
-    if (f.Hinweis19) content.push({ text: f.Hinweis19, margin: [0, 14, 0, 0] });
+    if (!mitUst && f.Hinweis19) content.push({ text: f.Hinweis19, margin: [0, 14, 0, 0] });
     if (b.Notiz) content.push({ text: b.Notiz, margin: [0, 10, 0, 0] });
     if (zahl) content.push({ text: zahl, margin: [0, 10, 0, 0] });
     content.push({ text: "Mit freundlichen Grüßen", margin: [0, 18, 0, 0] });
@@ -131,5 +153,5 @@
   const blob = (b, f) => new Promise(r => mk(b, f).getBlob(r));
   const open = (b, f) => mk(b, f).open();
 
-  root.EFPdf = { build, blob, open, titel, eur, dat, lineTotal };
+  root.EFPdf = { build, blob, open, titel, eur, dat, lineTotal, totals };
 })(typeof window !== "undefined" ? window : globalThis);
