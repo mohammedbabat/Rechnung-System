@@ -41,9 +41,6 @@
   const login = () => app().loginRedirect({ scopes: SCOPES });
   const logout = () => app().logoutRedirect({ account });
 
-  // Eigene Berechtigung nur für die private Finanzen-Seite (OneDrive des angemeldeten Benutzers)
-  const FILE_SCOPES = ["Files.ReadWrite"];
-
   async function token(scopes = SCOPES) {
     try {
       const r = await app().acquireTokenSilent({ scopes, account });
@@ -278,19 +275,8 @@
     return { personen, gruppen, offen, webUrl: privatWebUrl };
   }
 
-  // Nur zum einmaligen Übernehmen älterer Daten aus dem eigenen OneDrive
-  async function onedriveAltLaden() {
-    try {
-      const meta = await g(`/me/drive/root:/Ein-Facher-Privat/finanzen.json?select=id,@microsoft.graph.downloadUrl`, { scopes: FILE_SCOPES });
-      const url = meta["@microsoft.graph.downloadUrl"];
-      if (!url) return null;
-      const res = await fetch(url);
-      return res.ok ? JSON.parse(await res.text()) : null;
-    } catch (_) { return null; }
-  }
-
   window.EFGraph = {
     init, login, logout, account: () => account, items, create, update, remove, ensureLists, checkSchema, uploadPdf, sendMail,
-    users, addSiteMember, removeSiteMember, privatLaden, privatSpeichern, privatZugriff, onedriveAltLaden, privatBibliothek: () => PRIVAT_BIB
+    users, addSiteMember, removeSiteMember, privatLaden, privatSpeichern, privatZugriff, privatBibliothek: () => PRIVAT_BIB
   };
 })();
