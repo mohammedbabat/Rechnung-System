@@ -37,7 +37,33 @@
   const KU_LAUFEND = 100000;   // § 19 UStG: Umsatz laufendes Jahr
   const VORAUSZAHLUNG_AB = 400; // § 37 Abs. 5 EStG
   const PFLICHT_NEBENEINK = 410; // § 46 Abs. 2 Nr. 1 EStG
-  const STKL = ["I", "II", "III", "IV", "V", "VI"];
+  const STKL = ["1", "2", "3", "4", "5", "6"];
+  const KL_ROEMISCH = { I: "1", II: "2", III: "3", IV: "4", V: "5", VI: "6" };
+  // akzeptiert 4, "4", "IV", "Klasse 4" -> "4"
+  const normKl = v => { const t = String(v ?? "").trim().toUpperCase().replace(/^KLASSE\s*/, ""); return /^[1-6]$/.test(t) ? t : (KL_ROEMISCH[t] || "4"); };
+  const MONATE_KURZ = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+
+  // Steuerklassen-Zeiträume einer Person: [{ von: 1, bis: 7, kl: "3" }, { von: 8, bis: 12, kl: "4" }]
+  function perioden(i, n) {
+    const roh = Array.isArray(i[`p${n}_perioden`]) ? i[`p${n}_perioden`] : [];
+    const ps = roh.map(x => ({ von: Math.min(12, Math.max(1, Math.floor(num(x.von)) || 1)), bis: Math.min(12, Math.max(1, Math.floor(num(x.bis)) || 12)), kl: normKl(x.kl) }))
+      .filter(x => x.von <= x.bis).sort((a, b) => a.von - b.von);
+    return ps.length ? ps : [{ von: 1, bis: 12, kl: normKl(i[`p${n}_stkl`] || "4") }];
+  }
+  // Klasse in Monat m (Lücken: letzter Zeitraum davor, sonst der erste)
+  function klasseImMonat(ps, m) {
+    const t = ps.find(x => x.von <= m && m <= x.bis);
+    if (t) return t.kl;
+    const vor = ps.filter(x => x.bis < m).pop();
+    return (vor || ps[0]).kl;
+  }
+  // 12 Monatsklassen -> zusammengefasste Zeiträume
+  function zuPerioden(klassen) {
+    const out = [];
+    klassen.forEach((kl, k) => { const l = out[out.length - 1]; if (l && l.kl === kl) l.bis = k + 1; else out.push({ von: k + 1, bis: k + 1, kl }); });
+    return out;
+  }
+  const periodenText = ps => ps.length === 1 ? "Klasse " + ps[0].kl : ps.map(x => `${MONATE_KURZ[x.von - 1]}–${MONATE_KURZ[x.bis - 1]}: ${x.kl}`).join(", ");
 
   const num = v => { const n = Number(v); return isFinite(n) ? n : 0; };
   const leer = v => v === "" || v === null || v === undefined;
@@ -79,10 +105,11 @@
   }
   function lohnsteuer(brutto, kl, p, vorsorge) {
     if (brutto <= 0) return 0;
-    const anp = kl === "VI" ? 0 : ANP, sap = kl === "VI" ? 0 : SAP;
-    const x = Math.floor(Math.max(0, brutto - anp - sap - vorsorge - (kl === "II" ? ENTLASTUNG_II : 0)));
-    if (kl === "III") return splitting(x, p);
-    if (kl === "V" || kl === "VI") return mst56(x, p);
+    kl = normKl(kl);
+    const anp = kl === "6" ? 0 : ANP, sap = kl === "6" ? 0 : SAP;
+    const x = Math.floor(Math.max(0, brutto - anp - sap - vorsorge - (kl === "2" ? ENTLASTUNG_II : 0)));
+    if (kl === "3") return splitting(x, p);
+    if (kl === "5" || kl === "6") return mst56(x, p);
     return tarif(x, p);
   }
 
@@ -98,7 +125,9 @@
   function person(pi, p, kinderlos) {
     const b1 = Math.max(0, num(pi.brutto)), b2 = Math.max(0, num(pi.brutto2));
     const brutto = b1 + b2;
-    const kl = STKL.includes(pi.stkl) ? pi.stkl : "IV";
+    const ps = pi.perioden && pi.perioden.length ? pi.perioden : [{ von: 1, bis: 12, kl: normKl(pi.stkl) }];
+    const kl = klasseImMonat(ps, 12);                     // aktuelle Klasse (Dezember)
+    const wechsel = new Set(ps.map(x => x.kl)).size > 1;
     const wk = brutto > 0 ? Math.min(brutto, Math.max(ANP, num(pi.wk))) : 0;
     const s = svSchaetzung(brutto, p, kinderlos);
     const svGeschaetzt = leer(pi.sv);
@@ -106,10 +135,14 @@
     const svAbz = s.gesamt > 0 ? svGes * (s.abziehbar / s.gesamt) : 0;
     const vors1 = svSchaetzung(b1, p, kinderlos).abziehbar, vors2 = svSchaetzung(b2, p, kinderlos).abziehbar;
     const lst1Geschaetzt = leer(pi.lst) && b1 > 0;
-    const lst1 = leer(pi.lst) ? lohnsteuer(b1, kl, p, vors1) : Math.max(0, num(pi.lst));
+    // geschätzte Lohnsteuer: jeder Monat mit seiner Klasse (Jahreswert der Klasse ÷ 12)
+    const lstNachKlassen = () => { const cache = {}; let su = 0;
+      for (let m = 1; m <= 12; m++) { const k = klasseImMonat(ps, m); if (cache[k] == null) cache[k] = lohnsteuer(b1, k, p, vors1); su += cache[k] / 12; }
+      return Math.round(su * 100) / 100; };
+    const lst1 = leer(pi.lst) ? lstNachKlassen() : Math.max(0, num(pi.lst));
     const lst2Geschaetzt = leer(pi.lst2) && b2 > 0;
-    const lst2 = b2 <= 0 ? 0 : (leer(pi.lst2) ? lohnsteuer(b2, "VI", p, vors2) : Math.max(0, num(pi.lst2)));
-    return { name: pi.name, kl, b1, b2, brutto, wk, wkPauschal: wk === Math.min(brutto, ANP), einkuenfte: brutto - wk,
+    const lst2 = b2 <= 0 ? 0 : (leer(pi.lst2) ? lohnsteuer(b2, "6", p, vors2) : Math.max(0, num(pi.lst2)));
+    return { name: pi.name, kl, perioden: ps, wechsel, klassenText: periodenText(ps), b1, b2, brutto, wk, wkPauschal: wk === Math.min(brutto, ANP), einkuenfte: brutto - wk,
              svGes, svAbz, svGeschaetzt, vors1, lst1, lst2, lst: lst1 + lst2, lstGeschaetzt: lst1Geschaetzt || lst2Geschaetzt };
   }
 
@@ -142,7 +175,7 @@
     const { p, basisJahr, exakt } = paramFor(i.jahr);
     const kinder = Math.max(0, Math.floor(num(i.kinder)));
     const kinderlos = kinder === 0;
-    const pp = n => person({ name: i[`p${n}_name`], stkl: i[`p${n}_stkl`], brutto: i[`p${n}_brutto`], wk: i[`p${n}_wk`], sv: i[`p${n}_sv`],
+    const pp = n => person({ name: i[`p${n}_name`], stkl: i[`p${n}_stkl`], perioden: perioden(i, n), brutto: i[`p${n}_brutto`], wk: i[`p${n}_wk`], sv: i[`p${n}_sv`],
       lst: i[`p${n}_lst`], brutto2: i[`p${n}_brutto2`], lst2: i[`p${n}_lst2`] }, p, kinderlos);
     const p1 = pp(1), p2 = pp(2);
     const inhaber = i.inhaber === "2" ? 2 : 1;
@@ -181,11 +214,11 @@
     const summeEinzeln = r2(einzeln[0].summe + einzeln[1].summe);
 
     // Steuerklassen-Vergleich (Hauptarbeitsverhältnis; Nebenjob bleibt Klasse VI)
-    const kombis = [["IV", "IV"], ["III", "V"], ["V", "III"]].map(([a, b]) => {
+    const kombis = [["4", "4"], ["3", "5"], ["5", "3"]].map(([a, b]) => {
       const l = lohnsteuer(p1.b1, a, p, p1.vors1) + p1.lst2 + lohnsteuer(p2.b1, b, p, p2.vors1) + p2.lst2;
       return { kl: a + "/" + b, lst: l, aktuell: p1.kl === a && p2.kl === b };
     });
-    const lstIV = lohnsteuer(p1.b1, "IV", p, p1.vors1) + lohnsteuer(p2.b1, "IV", p, p2.vors1);
+    const lstIV = lohnsteuer(p1.b1, "4", p, p1.vors1) + lohnsteuer(p2.b1, "4", p, p2.vors1);
     const faktor = lstIV > 0 ? Math.min(0.999, Math.floor(ohneU.tariflich / lstIV * 1000) / 1000) : 0;
 
     const gezahlt = r2(p1.lst + p2.lst + Math.max(0, num(i.vorauszahlungen)));
@@ -215,8 +248,8 @@
   // ---------- Oberfläche ----------
   const DEFAULT = {
     kinder: 1, kist: "keine", kistSatz: 9,
-    p1_name: "Mohammed", p1_stkl: "IV", p1_brutto: "", p1_wk: "", p1_sv: "", p1_lst: "", p1_brutto2: "", p1_lst2: "",
-    p2_name: "Ehefrau", p2_stkl: "IV", p2_brutto: "", p2_wk: "", p2_sv: "", p2_lst: "", p2_brutto2: "", p2_lst2: "",
+    p1_name: "Mohammed", p1_stkl: "4", p1_perioden: [], p1_abr: [], p1_brutto: "", p1_wk: "", p1_sv: "", p1_lst: "", p1_brutto2: "", p1_lst2: "",
+    p2_name: "Ehefrau", p2_stkl: "4", p2_perioden: [], p2_abr: [], p2_brutto: "", p2_wk: "", p2_sv: "", p2_lst: "", p2_brutto2: "", p2_lst2: "",
     inhaber: "1", quelle: "ef", einnahmenManuell: "", ausgaben: "", hebesatz: 500,
     vorauszahlungen: "", weitereAbzuege: ""
   };
@@ -297,7 +330,6 @@
     Object.keys(STORE.jahre).forEach(y => { if (!jahre.includes(y)) jahre.push(y); });
     jahre.sort();
     const firmen = api.S.firmen.map(f => [f.key, "Bezahlte Rechnungen „" + f.d.Firma + "“"]);
-    const stklOpts = STKL.map(k => [k, "Klasse " + k]);
 
     api.view(`
       <div class="head"><h1>Finanzen <span class="muted">· privat</span></h1><span class="grow"></span>
@@ -317,14 +349,14 @@
         ${[1, 2].map(n => `<div class="card"><div class="row between"><h3>${n === 1 ? "Person 1" : "Person 2 (Ehepartner)"}</h3>
           <button class="btn ghost small" type="button" data-hoch="${n}">📄 Gehaltsabrechnung hochladen</button></div><div class="grid">
           ${feld(`p${n}_name`, "Name", { text: true })}
-          ${feld(`p${n}_stkl`, "Steuerklasse", { options: stklOpts })}
+          ${periodenHtml(n)}
           ${feld(`p${n}_brutto`, "Bruttoarbeitslohn im Jahr € (Hauptjob)", { ph: "0" })}
           ${feld(`p${n}_lst`, "Lohnsteuer + Soli + KiSt im Jahr € (leer = Schätzung)", { ph: "automatisch" })}
           ${feld(`p${n}_sv`, "Sozialversicherung AN-Anteil € (leer = Schätzung)", { ph: "automatisch" })}
           ${feld(`p${n}_wk`, "Werbungskosten € (leer = Pauschale 1.230)", { ph: "1230" })}
           ${feld(`p${n}_brutto2`, "Brutto 2. Arbeitgeber € (z. B. früherer Job)", { ph: "0" })}
-          ${feld(`p${n}_lst2`, "Lohnsteuer 2. Arbeitgeber € (leer = Klasse VI geschätzt)", { ph: "automatisch" })}
-        </div><p class="small muted">Werte stehen auf der Lohnsteuerbescheinigung bzw. in den Jahreswerten der Gehaltsabrechnung. Minijobs mit Pauschalsteuer nicht eintragen.</p></div>`).join("")}
+          ${feld(`p${n}_lst2`, "Lohnsteuer 2. Arbeitgeber € (leer = Klasse 6 geschätzt)", { ph: "automatisch" })}
+        </div>${abrListeHtml(n)}<p class="small muted">Werte stehen auf der Lohnsteuerbescheinigung bzw. in den Jahreswerten der Gehaltsabrechnung. Minijobs mit Pauschalsteuer nicht eintragen.</p></div>`).join("")}
       </div>
 
       <div class="card"><h3>Einzelunternehmen</h3><div class="grid g4">
@@ -350,9 +382,92 @@
     };
     document.querySelectorAll("[data-k]").forEach(el => { el.oninput = onChange; el.onchange = onChange; });
     document.querySelectorAll("[data-hoch]").forEach(b => { b.onclick = () => hochrechnenDialog(Number(b.dataset.hoch)); });
+    bindPerioden(jahr);
     $("#fiJahr").onchange = e => { location.hash = "#/finanzen/" + e.target.value; };
     $("#fiSave").onclick = speichern;
+    document.querySelectorAll("[data-adel]").forEach(b => { b.onclick = () => {
+      const [n, m] = b.dataset.adel.split(":").map(Number);
+      CUR[`p${n}_abr`] = (CUR[`p${n}_abr`] || []).filter(a => a.monat !== m);
+      abrAnwenden(n); neuZeichnen();
+    }; });
     renderRes();
+  }
+
+  // ---------- Steuerklassen-Zeiträume (Editor) ----------
+  const monatOpts = sel => MONATE_KURZ.map((t, k) => `<option value="${k + 1}" ${k + 1 === sel ? "selected" : ""}>${t}</option>`).join("");
+  function periodenHtml(n) {
+    const ps = perioden(CUR, n);
+    return `<div class="wide kl-box"><div class="row between"><span class="lbl">Steuerklasse im Jahr</span>
+        <button type="button" class="link small" data-padd="${n}">+ Klassenwechsel hinzufügen</button></div>
+      ${ps.map((x, k) => `<div class="prow" data-n="${n}" data-i="${k}">
+        <select data-pf="von" aria-label="von">${monatOpts(x.von)}</select><span class="muted">bis</span>
+        <select data-pf="bis" aria-label="bis">${monatOpts(x.bis)}</select>
+        <select data-pf="kl" aria-label="Steuerklasse" class="klsel">${STKL.map(c => `<option value="${c}" ${c === x.kl ? "selected" : ""}>Klasse ${c}</option>`).join("")}</select>
+        ${ps.length > 1 ? `<button type="button" class="icon" data-pdel title="Zeitraum entfernen">✕</button>` : ""}</div>`).join("")}</div>`;
+  }
+  function setzePerioden(n, ps) {
+    ps = ps.slice().sort((a, b) => a.von - b.von);
+    CUR[`p${n}_perioden`] = ps;
+    CUR[`p${n}_stkl`] = klasseImMonat(ps, 12);
+    STORE.jahre[CUR.jahr] = Object.assign({}, CUR);
+  }
+  function bindPerioden(jahr) {
+    document.querySelectorAll("[data-padd]").forEach(b => { b.onclick = () => {
+      const n = Number(b.dataset.padd), ps = perioden(CUR, n).map(x => Object.assign({}, x));
+      const l = ps[ps.length - 1];
+      if (l.von === l.bis) return API.toast("Zeitraum zu kurz zum Aufteilen – Monate oben anpassen", "err");
+      const mitte = Math.floor((l.von + l.bis) / 2);
+      ps.push({ von: mitte + 1, bis: l.bis, kl: l.kl });         // spätere Monate behalten die aktuelle Klasse
+      l.bis = mitte; l.kl = l.kl === "4" ? "3" : "4";           // frühere Monate: andere Klasse (anpassbar)
+      setzePerioden(n, ps); neuZeichnen();
+    }; });
+    document.querySelectorAll(".prow").forEach(row => {
+      const n = Number(row.dataset.n), k = Number(row.dataset.i);
+      row.querySelectorAll("[data-pf]").forEach(sel => { sel.onchange = () => {
+        const ps = perioden(CUR, n).map(x => Object.assign({}, x));
+        ps[k][sel.dataset.pf] = sel.dataset.pf === "kl" ? sel.value : Number(sel.value);
+        if (ps[k].von > ps[k].bis) { if (sel.dataset.pf === "von") ps[k].bis = ps[k].von; else ps[k].von = ps[k].bis; }
+        setzePerioden(n, ps); neuZeichnen();
+      }; });
+      const del = row.querySelector("[data-pdel]");
+      if (del) del.onclick = () => { const ps = perioden(CUR, n).filter((_, j) => j !== k); setzePerioden(n, ps); neuZeichnen(); };
+    });
+  }
+  function neuZeichnen() { const y = window.scrollY; render(API, CUR.jahr); window.scrollTo(0, y); $("#fiSave").textContent = "Speichern *"; }
+
+  // ---------- Hochgeladene Gehaltsabrechnungen je Person ----------
+  function abrListeHtml(n) {
+    const liste = (CUR[`p${n}_abr`] || []).slice().sort((a, b) => a.monat - b.monat);
+    if (!liste.length) return "";
+    const eur = API.eur;
+    return `<div class="abrliste"><div class="lbl">Hochgeladene Abrechnungen ${CUR.jahr}</div>
+      <table class="tbl fitbl"><thead><tr><th>Monat</th><th>Klasse</th><th class="r">Brutto</th><th class="r">Lohnsteuer</th><th></th></tr></thead><tbody>
+      ${liste.map(a => `<tr><td>${a.typ === "jahr" ? "Jahresbescheinigung" : MONATSNAMEN[a.monat - 1]}</td><td>${a.stkl ? "Klasse " + a.stkl : "–"}</td>
+        <td class="r">${a.bm ? eur(a.bm) : eur(a.bj)}</td><td class="r">${a.lm ? eur(a.lm) : eur(a.lj || 0)}</td>
+        <td class="r"><button type="button" class="icon" data-adel="${n}:${a.monat}" title="Abrechnung entfernen">✕</button></td></tr>`).join("")}
+      </tbody></table></div>`;
+  }
+
+  // Aus allen Abrechnungen: Jahr hochrechnen (neueste zählt) und Klassen-Zeiträume ableiten
+  function abrAnwenden(n) {
+    const liste = (CUR[`p${n}_abr`] || []).slice().sort((a, b) => a.monat - b.monat);
+    if (!liste.length) return;
+    const neu = liste[liste.length - 1], rest = 12 - neu.monat, v = x => Math.abs(num(x));
+    CUR[`p${n}_brutto`] = r2(v(neu.bj) + v(neu.bm) * rest);
+    if (neu.lj != null && neu.lj !== "") CUR[`p${n}_lst`] = r2(v(neu.lj) + v(neu.lm) * rest);
+    if (neu.sj != null && neu.sj !== "") CUR[`p${n}_sv`] = r2(v(neu.sj) + v(neu.sm) * rest);
+    const mitKl = liste.filter(a => a.stkl && a.typ !== "jahr");
+    if (mitKl.length) {
+      const ps = perioden(CUR, n), klassen = [];
+      for (let m = 1; m <= 12; m++) klassen.push(klasseImMonat(ps, m));
+      mitKl.forEach((a, k) => {
+        const ab = k === 0 ? a.monat : mitKl[k - 1].monat + 1;          // Monate vor der ersten Abrechnung bleiben wie eingestellt
+        for (let m = ab; m <= a.monat; m++) klassen[m - 1] = a.stkl;
+      });
+      for (let m = mitKl[mitKl.length - 1].monat + 1; m <= 12; m++) klassen[m - 1] = mitKl[mitKl.length - 1].stkl;
+      setzePerioden(n, zuPerioden(klassen));
+    }
+    STORE.jahre[CUR.jahr] = Object.assign({}, CUR);
   }
 
   function speichern() {
@@ -416,7 +531,7 @@
   function hochrechnenDialog(n, datei) {
     const esc = API.esc, eur = API.eur, mon = Math.max(1, Number(API.today().slice(5, 7)) - 1);
     const name = CUR[`p${n}_name`] || ("Person " + n);
-    let erkannt = {};   // Steuerklasse, Kinder, Kirchensteuer aus dem PDF
+    let erkannt = {}, typ = "monat";   // Kinder, Kirchensteuer aus dem PDF
     $("#modalBox").innerHTML = `<h2>Gehaltsabrechnung – ${esc(name)}</h2>
       <div class="dropzone" id="hfDrop">
         <div><strong>PDF hier hineinziehen</strong> oder <label class="link">Datei auswählen<input type="file" id="hfFile" accept="application/pdf,.pdf" hidden></label></div>
@@ -426,8 +541,9 @@
       <p class="small muted">Oder Werte von Hand eintragen: „Jahreswert“ = Spalte rechts (bisher im Jahr), „Monat“ = Betrag des Abrechnungsmonats.
         Gerechnet wird: Jahreswert bisher + Monatsbetrag × restliche Monate.</p>
       <form id="hf" class="grid">
-        <label class="wide">Abrechnungsmonat<select name="m">${MONATSNAMEN
+        <label>Abrechnungsmonat<select name="m">${MONATSNAMEN
           .map((t, i) => `<option value="${i + 1}" ${i + 1 === mon ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+        <label>Steuerklasse in diesem Monat<select name="kl">${STKL.map(c => `<option value="${c}" ${c === klasseImMonat(perioden(CUR, n), mon) ? "selected" : ""}>Klasse ${c}</option>`).join("")}</select></label>
         <label>Steuerbrutto Jahreswert bisher €<input name="bj" type="number" step="0.01" required></label>
         <label>Steuerbrutto Monat €<input name="bm" type="number" step="0.01" required></label>
         <label>Lohnsteuer (+ Soli + KiSt) Jahreswert bisher €<input name="lj" type="number" step="0.01"></label>
@@ -460,15 +576,16 @@
       catch (e) { $("#hfInfo").innerHTML = `<div class="hfbox warn">PDF konnte nicht gelesen werden: ${esc(e.message)}</div>`; return; }
       if (!r.textGefunden) { $("#hfInfo").innerHTML = `<div class="hfbox warn">In diesem PDF ist kein Text enthalten (eingescannt/Foto). Bitte die Werte unten von Hand eintragen.</div>`; return; }
       const setze = (k, v) => { if (v != null && f.elements[k]) f.elements[k].value = v; };
-      setze("m", r.monat); setze("bj", r.bj); setze("bm", r.bm); setze("lj", r.lj); setze("lm", r.lm); setze("sj", r.sj); setze("sm", r.sm);
+      setze("m", r.monat); if (r.stkl) setze("kl", normKl(r.stkl)); setze("bj", r.bj); setze("bm", r.bm); setze("lj", r.lj); setze("lm", r.lm); setze("sj", r.sj); setze("sm", r.sm);
       erkannt = {};
       if (r.stkl) erkannt.stkl = r.stkl;
       if (r.kinderfreibetrag != null) erkannt.kinder = Math.ceil(r.kinderfreibetrag);
       if (r.kist) erkannt.kist = r.kist;
+      typ = r.typ;
       const ok = [];
       if (r.typ === "jahr") ok.push(`Lohnsteuerbescheinigung ${r.jahr || ""}`.trim());
       else if (r.monat) ok.push(`Abrechnung ${MONATSNAMEN[r.monat - 1]} ${r.jahr || ""}`.trim());
-      if (r.stkl) ok.push("Steuerklasse " + r.stkl);
+      if (r.stkl) ok.push("Steuerklasse " + normKl(r.stkl));
       if (r.kinderfreibetrag != null) ok.push("Kinderfreibetrag " + String(r.kinderfreibetrag).replace(".", ","));
       if (r.kist === "keine") ok.push("keine Kirchensteuer");
       if (r.bj != null) ok.push(`Steuerbrutto ${r.bm ? eur(r.bm) + " / " : ""}${eur(r.bj)}`);
@@ -491,18 +608,18 @@
     $("#hfC").onclick = close;
     f.onsubmit = e => {
       e.preventDefault();
-      const c = calc();
-      CUR[`p${n}_brutto`] = c.brutto;
-      if (c.lst !== "") CUR[`p${n}_lst`] = c.lst;
-      if (c.sv !== "") CUR[`p${n}_sv`] = c.sv;
-      if (erkannt.stkl) CUR[`p${n}_stkl`] = erkannt.stkl;
+      const el = f.elements, wert = k => el[k].value === "" ? null : Math.abs(num(el[k].value));
+      const eintrag = { monat: Number(el.m.value), stkl: normKl(el.kl.value), typ,
+        bj: wert("bj") || 0, bm: wert("bm") || 0, lj: wert("lj"), lm: wert("lm") || 0, sj: wert("sj"), sm: wert("sm") || 0 };
+      if (typ === "jahr") eintrag.monat = 12;
+      CUR[`p${n}_abr`] = (CUR[`p${n}_abr`] || []).filter(a => a.monat !== eintrag.monat).concat([eintrag]);
+      abrAnwenden(n);
       if (erkannt.kinder != null && n === 1) CUR.kinder = erkannt.kinder;
       if (erkannt.kist === "keine" && CUR.kist === "beide") CUR.kist = "eine";
       STORE.jahre[CUR.jahr] = Object.assign({}, CUR);
       close();
-      render(API, CUR.jahr);
-      $("#fiSave").textContent = "Speichern *";
-      API.toast("Werte übernommen – bitte speichern");
+      neuZeichnen();
+      API.toast("Abrechnung " + MONATSNAMEN[eintrag.monat - 1] + " übernommen – bitte speichern");
     };
   }
 
@@ -637,10 +754,11 @@
       `Was du für das Unternehmen sowieso brauchst (z. B. Laptop, Software, Fachbücher), mindert den Gewinn noch in ${jahr}. Geräte bis 800 € netto kannst du sofort voll absetzen. Ersparnis ca. ${pct(r.grenz)} des Betrags – kaufe aber nichts nur wegen der Steuer.`);
 
     // 8. Pflicht zur Steuererklärung
-    if (r.gewinn > PFLICHT_NEBENEINK || r.p1.kl === "III" || r.p1.kl === "V" || r.p2.kl === "III" || r.p2.kl === "V" || r.p1.b2 > 0 || r.p2.b2 > 0) {
+    const klasse35 = [r.p1, r.p2].some(pr => pr.perioden.some(x => x.kl === "3" || x.kl === "5"));
+    if (r.gewinn > PFLICHT_NEBENEINK || klasse35 || r.p1.b2 > 0 || r.p2.b2 > 0) {
       const gruende = [];
       if (r.gewinn > PFLICHT_NEBENEINK) gruende.push(`Gewinn über ${PFLICHT_NEBENEINK} €`);
-      if ([r.p1.kl, r.p2.kl].some(k => k === "III" || k === "V")) gruende.push("Steuerklasse III/V");
+      if (klasse35) gruende.push("Steuerklasse 3/5 in " + jahr);
       if (r.p1.b2 > 0 || r.p2.b2 > 0) gruende.push("mehrere Arbeitgeber");
       add("info", "Steuererklärung ist Pflicht", `Grund: ${gruende.join(", ")}. Abgabe für ${jahr} bis 31.07.${jahr + 1} (mit Steuerberater/Lohnsteuerhilfeverein später).`);
     }
@@ -734,8 +852,8 @@
           ${zeile("+ Solidaritätszuschlag", eur(z.soli), "", z.soli ? "" : `Freigrenze ${eur(2 * r.p.soliFG)} nicht überschritten`)}
           ${r.kistFaktor ? zeile(`+ Kirchensteuer (${esc(r.kistSatz)} %)`, eur(z.kist)) : ""}
           ${zeile("= Steuer Finanzamt", eur(z.summe), "sum")}
-          ${zeile(`− Lohnsteuer ${n1}`, eur(r.p1.lst), "", r.p1.lstGeschaetzt ? `geschätzt (Klasse ${r.p1.kl}${r.p1.b2 ? " + VI" : ""})` : "")}
-          ${zeile(`− Lohnsteuer ${n2}`, eur(r.p2.lst), "", r.p2.lstGeschaetzt ? `geschätzt (Klasse ${r.p2.kl}${r.p2.b2 ? " + VI" : ""})` : "")}
+          ${zeile(`− Lohnsteuer ${n1}`, eur(r.p1.lst), "", r.p1.lstGeschaetzt ? `geschätzt (${r.p1.klassenText}${r.p1.b2 ? " + 6" : ""})` : (r.p1.wechsel ? r.p1.klassenText : ""))}
+          ${zeile(`− Lohnsteuer ${n2}`, eur(r.p2.lst), "", r.p2.lstGeschaetzt ? `geschätzt (${r.p2.klassenText}${r.p2.b2 ? " + 6" : ""})` : (r.p2.wechsel ? r.p2.klassenText : ""))}
           ${num(CUR.vorauszahlungen) ? zeile("− Vorauszahlungen", eur(num(CUR.vorauszahlungen))) : ""}
           ${zeile(`= Voraussichtliche ${vz}`, eur(Math.abs(r.ergebnis)), "sum " + (r.ergebnis > 0 ? "neg" : "pos"))}
         </tbody></table></div></div>

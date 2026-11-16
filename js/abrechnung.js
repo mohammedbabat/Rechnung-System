@@ -10,7 +10,7 @@
   const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
   const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   const MONATE = ["januar", "februar", "märz", "april", "mai", "juni", "juli", "august", "september", "oktober", "november", "dezember"];
-  const KLASSEN = { 1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI" };
+  const ROEMISCH = { I: "1", II: "2", III: "3", IV: "4", V: "5", VI: "6" };   // Steuerklassen werden als Zahl 1–6 geliefert
 
   // ---------- PDF -> Textzeilen ----------
   let ladeVersprechen = null;
@@ -93,7 +93,7 @@
     // Steuerklasse, Kinderfreibeträge, Kirchensteuer
     const sk = /steuerklasse\s*:?\s*([1-6])\b/i.exec(text) || /st(?:euer)?kl(?:asse)?\.?\s*:?\s*([1-6])\b/i.exec(text);
     const skr = sk ? null : /steuerklasse\s*:?\s*(VI|IV|V|III|II|I)\b/.exec(text);
-    if (sk) out.stkl = KLASSEN[sk[1]]; else if (skr) out.stkl = skr[1];
+    if (sk) out.stkl = sk[1]; else if (skr) out.stkl = ROEMISCH[skr[1]];
     const kf = /kinderfreibetr[\wäöüß]*\s*:?\s*(\d+(?:,\d+)?)/i.exec(text);
     if (kf) out.kinderfreibetrag = Number(kf[1].replace(",", "."));
     if (/nicht\s+kirchensteuerpflichtig|konfession\s*:?\s*(--|-|keine|ohne|vd)(?=\s|$)/im.test(text)) out.kist = "keine";
@@ -145,7 +145,7 @@
     if (jahr) out.jahr = Number(jahr[1]);
     const letzte = muster => { const z = finde(zeilen, muster); for (const l of z) { const b = betraege(l); if (b.length) return b[b.length - 1]; } return null; };
     const sk = /steuerklasse\s*:?\s*([1-6])\b/i.exec(text);
-    if (sk) out.stkl = KLASSEN[sk[1]];
+    if (sk) out.stkl = sk[1];
     const brutto = letzte(/^\s*3\.?\s|bruttoarbeitslohn/i);
     const lst = letzte(/^\s*4\.?\s|einbehaltene\s+lohnsteuer/i) || 0;
     const soli = letzte(/^\s*5\.?\s|einbehaltener\s+solidarit/i) || 0;
