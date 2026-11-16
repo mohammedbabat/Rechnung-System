@@ -179,7 +179,9 @@ a.kpi:hover { border-color: var(--accent); }
 .total.sub + .total:not(.sub) { margin-top: 6px; }
 
 /* Finanzen (privat) */
-.fi2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.fi2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.fi2 > * { min-width: 0; }
+main { min-width: 0; }
 .fi2 > .card, .fi2 > div > .card { margin-bottom: 16px; }
 .fitbl td { padding: 7px 10px; }
 .fitbl tr.sum td { font-weight: 700; border-top: 2px solid var(--line); }
@@ -187,4 +189,23 @@ a.kpi:hover { border-color: var(--accent); }
 .fitbl tr.pos td:last-child { color: var(--ok); }
 .kpi.ok .v { color: var(--ok); }
 .warnbox { border-color: #F5C26B; background: #FFFBEB; }
-@media (max-width: 860px) { .fi2 { grid-template-columns: 1fr; } }
+@media (max-width: 860px) { .fi2 { grid-template-columns: minmax(0, 1fr); } .shell { grid-template-columns: minmax(0, 1fr); } .head .grow { display: none; } code { word-break: break-all; } }
+
+/* Finanzen: Grafiken und Empfehlungen */
+.chart { width: 100%; height: auto; display: block; font-family: inherit; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.legend i.ring { border: 2px solid #0F766E; border-radius: 50%; background: #fff; }
+.tipps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.tipps li { display: flex; gap: 12px; padding: 12px; border-radius: 9px; border: 1px solid var(--line); background: #FAFBFB; }
+.tipps .ti { flex: 0 0 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #fff; background: #64748B; }
+.tipps li.t-ok { border-color: #BFE5CB; background: #F3FBF5; } .tipps li.t-ok .ti { background: var(--ok); }
+.tipps li.t-warn { border-color: #F5D39B; background: #FFFBEB; } .tipps li.t-warn .ti { background: var(--warn); }
+.tipps li.t-crit { border-color: #F1C4C4; background: #FDF2F2; } .tipps li.t-crit .ti { background: var(--err); }
+.tipps li.t-info .ti { background: #0369A1; }
+.tipps .small { margin-top: 3px; line-height: 1.45; }
+.fitbl thead th { text-align: left; }
+.fitbl thead th.r { text-align: right; }
+.fitbl td.neg { color: var(--err); } .fitbl td.pos { color: var(--ok); }
+.fitbl tr.akt td { background: #F0FDFA; font-weight: 600; }
+.btn.small { padding: 5px 10px; font-size: 12px; }
