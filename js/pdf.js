@@ -25,7 +25,7 @@
     f = f || {};
     const k = b.Kunde || {};
     const pos = b.Positionen || [];
-    const accent = f.Farbe || "#0F766E";
+    const accent = f.Farbe || "#7B2FBE";
     const t = totals(b);
     const mitUst = t.satz > 0;
     const nr = b.Title || "ENTWURF";

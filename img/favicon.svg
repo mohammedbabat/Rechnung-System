@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7B2FBE"/><stop offset="1" stop-color="#5B1F9E"/></linearGradient></defs>
+  <rect width="64" height="64" rx="16" fill="url(#g)"/>
+  <g transform="translate(5 4) scale(2)">
+    <text x="1" y="20" font-family="Outfit,Segoe UI,Arial,sans-serif" font-weight="800" font-size="15" fill="#fff">EF</text>
+    <circle cx="23" cy="7" r="2.2" fill="#FB923C"/><circle cx="23" cy="21" r="2.2" fill="#FB923C"/>
+    <line x1="21" y1="7" x2="17" y2="7" stroke="#FB923C" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="21" y1="21" x2="17" y2="21" stroke="#FB923C" stroke-width="1.5" stroke-linecap="round"/>
+  </g>
+</svg>

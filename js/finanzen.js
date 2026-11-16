@@ -221,7 +221,7 @@
     vorauszahlungen: "", weitereAbzuege: ""
   };
   const LOCAL_KEY = "ef_finanzen_lokal";
-  const FARBE = { netto: "#0F766E", sv: "#64748B", est: "#D97706", gewst: "#7C3AED", grenze: "#DC2626", hilf: "#94A3B8" };
+  const FARBE = { netto: "#7B2FBE", sv: "#A898C8", est: "#F97316", gewst: "#DB2777", grenze: "#DC2626", hilf: "#94A3B8" };
   let STORE = null, LOADED = false, LOAD_ERR = null, CUR = null, API = null;
 
   const $ = s => document.querySelector(s);

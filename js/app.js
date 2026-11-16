@@ -32,7 +32,7 @@
     Steuernummer: "", UstId: "", Bank: "", IBAN: "", BIC: "",
     Steuer: STEUER_KU, UstSatz: 19, Nummernpraefix: "",
     MailFrom: C.mailFrom || "", PdfOrdner: C.pdfFolder || "Rechnungen",
-    Zahlungsziel: 14, AngebotGueltig: 30, Umsatzgrenze: 25000, Farbe: "#0F766E",
+    Zahlungsziel: 14, AngebotGueltig: 30, Umsatzgrenze: 25000, Farbe: "#7B2FBE",
     Hinweis19: "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.",
     MailBetreff: "{typ} {nr} – {firma}",
     MailText: "Guten Tag,\n\nanbei erhalten Sie {dokument} vom {datum} über {summe}.\n{hinweis}\n\nBei Fragen melden Sie sich gerne.\n\nMit freundlichen Grüßen\n{inhaber}\n{firma}"
@@ -225,7 +225,7 @@
     const sel = $("#firmaSel");
     if (sel) sel.onchange = e => wechsleFirma(e.target.value, true);
     const brandSmall = document.querySelector(".sidebar .brand small");
-    if (brandSmall) brandSmall.textContent = cur().Firma || "Rechnungen";
+    if (brandSmall) brandSmall.textContent = !cur().Firma || cur().Firma === "Ein-Facher" ? "Rechnungen" : "Rechnungen · " + cur().Firma;
   }
   function setNav(sec, sub) { S.nav = { sec, sub: sub || "" }; renderNav(); }
 
@@ -249,7 +249,11 @@
     const out = [];
     einst.forEach(x => {
       const t = String(x.Title || "");
-      if (t === "firma") out.push({ key: "ef", itemId: x.id, d: Object.assign({}, FIRMA_DEFAULT, safeJson(x.Wert, {})) });
+      if (t === "firma") {
+        const d = Object.assign({}, FIRMA_DEFAULT, safeJson(x.Wert, {}));
+        if (String(d.Farbe).toUpperCase() === "#0F766E") d.Farbe = FIRMA_DEFAULT.Farbe;   // altes Grün -> Ein-Facher-Lila
+        out.push({ key: "ef", itemId: x.id, d });
+      }
       else if (t.startsWith("firma:")) out.push({ key: t.slice(6), itemId: x.id, d: Object.assign({}, FIRMA_DEFAULT, { Hinweis19: FIRMA_DEFAULT.Hinweis19 }, safeJson(x.Wert, {})) });
     });
     if (!out.some(f => f.key === "ef")) out.unshift({ key: "ef", itemId: null, d: Object.assign({}, FIRMA_DEFAULT) });
