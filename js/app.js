@@ -137,7 +137,7 @@
 
   // ---------- Status ----------
   function effStatus(b) {
-    if (b.Typ === "Storno") return "Storno";
+    if (b.Typ === "Storno") return b.Status === "Aufgehoben" ? "Aufgehoben" : "Storno";
     if (b.Typ === "Rechnung" && ["Offen", "Versendet"].includes(b.Status) && b.Faellig && b.Faellig < today()) return "Überfällig";
     return b.Status;
   }
@@ -365,7 +365,7 @@
     const f = cur(), y = today().slice(0, 4);
     const offen = rechnungen().filter(RE_FILTER.unbezahlt);
     const ueber = rechnungen().filter(RE_FILTER.ueberfaellig);
-    const umsatzNetto = nettoOf(belege().filter(b => (b.Typ === "Rechnung" || b.Typ === "Storno") && b.Status !== "Entwurf" && String(b.Datum || "").startsWith(y)));
+    const umsatzNetto = nettoOf(belege().filter(b => (b.Typ === "Rechnung" || b.Typ === "Storno") && !["Entwurf", "Aufgehoben"].includes(b.Status) && String(b.Datum || "").startsWith(y)));
     const eingang = sumOf(belege().filter(b => b.Typ === "Rechnung" && b.Status === "Bezahlt" && String(b.BezahltAm || "").startsWith(y)));
     const angOffen = angebote().filter(b => ["Offen", "Versendet"].includes(b.Status));
     const grenze = Number(f.Umsatzgrenze) || 25000;
@@ -409,7 +409,7 @@
         .filter(b => !q || ((b.Title || "") + " " + ((b.Kunde && b.Kunde.Title) || "")).toLowerCase().includes(q))
         .sort(byDateDesc);
       $("#lst").innerHTML = belegTable(list, !isA);
-      $("#sumline").textContent = list.length ? `${list.length} ${list.length === 1 ? "Beleg" : "Belege"} · Summe ${eur(sumOf(list))}` : "";
+      $("#sumline").textContent = list.length ? `${list.length} ${list.length === 1 ? "Beleg" : "Belege"} · Summe ${eur(sumOf(list.filter(b => b.Status !== "Aufgehoben")))}` : "";
     };
     $("#q").oninput = draw; draw();
     setNav(base, sub === "alle" ? "" : sub);
@@ -734,6 +734,7 @@
       if (can("senden")) a.push(btn("send", "Per E-Mail senden", "primary"));
       if (t === "Rechnung" && ["Offen", "Versendet"].includes(s) && can("bezahlt")) a.push(btn("paid", "Als bezahlt markieren", "ok"));
       if (t === "Angebot" && ["Offen", "Versendet"].includes(s) && can("bearbeiten")) a.push(btn("accept", "Angenommen → Rechnung erstellen", "ok"), btn("reject", "Abgelehnt", "danger"));
+      if (t !== "Storno" && (can("bezahlt") || can("storno"))) a.push(btn("status", "Status ändern", "ghost"));
       a.push('<span class="grow"></span>');
       if (t === "Rechnung" && s !== "Storniert" && can("storno")) a.push(btn("storno", "Stornieren", "danger"));
     }
@@ -852,6 +853,42 @@
     };
   }
 
+  // Status von Hand ändern – auch eine stornierte Rechnung wieder aktivieren
+  function statusDialog() {
+    const istRe = D.Typ === "Rechnung", alt = D.Status;
+    const stati = istRe ? ["Offen", "Versendet", "Bezahlt"] : ["Offen", "Versendet", "Angenommen", "Abgelehnt"];
+    if (alt === "Storniert" && !can("storno")) return toast("Nur wer stornieren darf, kann eine Stornierung aufheben", "err");
+    const storno = alt === "Storniert" ? S.belege.find(b => b.Typ === "Storno" && b.BezugNr === D.Title && b.Firma === D.Firma && b.Status !== "Aufgehoben") : null;
+    const vorschlag = alt === "Storniert" ? (D.BezahltAm ? "Bezahlt" : D.Versendet ? "Versendet" : "Offen") : alt;
+    modal(`<h2>Status ändern – ${esc(D.Title)}</h2><form id="sf" class="grid">
+      <label class="wide">Neuer Status<select name="s">${stati.map(x => `<option ${x === vorschlag ? "selected" : ""}>${x}</option>`).join("")}</select></label>
+      <label class="wide" id="sfD">Bezahlt am<input type="date" name="d" value="${esc(D.BezahltAm || today())}"></label>
+      ${alt === "Storniert" ? `<div class="wide hfbox warn">Die Stornierung wird aufgehoben.${storno ? ` Die Stornorechnung <strong>${esc(storno.Title)}</strong> bleibt zur Dokumentation erhalten,
+        wird als <strong>Aufgehoben</strong> markiert und zählt nicht mehr im Umsatz.${storno.Versendet ? " Sie wurde dem Kunden bereits geschickt – informiere ihn, dass sie ungültig ist." : ""}` : ""}</div>
+        <label class="wide">Grund (optional, wird bei der Stornorechnung vermerkt)<input name="g" placeholder="z. B. irrtümlich storniert"></label>` : ""}
+      <div class="actions wide"><span class="grow"></span><button type="button" class="btn ghost" id="sfC">Abbrechen</button><button class="btn primary">Speichern</button></div></form>`);
+    const f = $("#sf"), zeigeDatum = () => { $("#sfD").classList.toggle("hidden", f.elements.s.value !== "Bezahlt"); };
+    f.elements.s.onchange = zeigeDatum; zeigeDatum();
+    $("#sfC").onclick = closeModal;
+    f.onsubmit = e => {
+      e.preventDefault();
+      const neu = f.elements.s.value, upd = { Status: neu };
+      if (neu === "Bezahlt") { if (!f.elements.d.value) return toast("Bitte das Zahlungsdatum eintragen", "err"); upd.BezahltAm = f.elements.d.value; }
+      else if (istRe) upd.BezahltAm = "";
+      busy(async () => {
+        if (storno) {
+          const g = f.elements.g ? f.elements.g.value.trim() : "";
+          const notiz = `${storno.Notiz || ""}\nAufgehoben am ${deDate(today())}${g ? ": " + g : ""} – Rechnung ${D.Title} ist wieder gültig.`.trim();
+          await G.update("Belege", storno.id, { Status: "Aufgehoben", Notiz: notiz });
+          Object.assign(storno, { Status: "Aufgehoben", Notiz: notiz }); upsertLocal(storno);
+        }
+        await G.update("Belege", D.id, upd);
+        Object.assign(D, upd); upsertLocal(D);
+        closeModal(); toast(`Status: ${neu}${storno ? ` · Stornorechnung ${storno.Title} aufgehoben` : ""}`); renderEditor();
+      });
+    };
+  }
+
   async function setStatus(s) { await G.update("Belege", D.id, { Status: s }); D.Status = s; upsertLocal(D); }
 
   function stornieren() {
@@ -899,6 +936,7 @@
     store: () => busy(async () => { await storePdf(); toast("PDF in SharePoint abgelegt"); renderEditor(); }),
     send: sendDialog,
     paid: paidDialog,
+    status: statusDialog,
     storno: stornieren,
     accept: angebotAngenommen,
     reject: () => { if (confirm("Angebot als abgelehnt markieren?")) busy(async () => { await setStatus("Abgelehnt"); renderEditor(); }); }
