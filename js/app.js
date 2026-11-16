@@ -77,7 +77,8 @@
 
   const S = { kunden: [], artikel: [], belege: [], benutzer: [], firmen: [], fk: "ef", editFk: null,
     setupNeeded: false, schemaMissing: [], me: null, entraUsers: null, nav: { sec: "dashboard", sub: "" } };
-  const can = p => !!S.me && (ROLLEN[S.me.Rolle] || []).includes(p);
+  // "finanzen" haben Administratoren und Benutzer mit dem Häkchen Finanzen = Ja
+  const can = p => !!S.me && ((ROLLEN[S.me.Rolle] || []).includes(p) || (p === "finanzen" && S.me.Finanzen === "Ja"));
   const firmaEntry = key => S.firmen.find(x => x.key === key) || S.firmen[0];
   const firmaOf = key => (firmaEntry(key) || { d: FIRMA_DEFAULT }).d;
   const cur = () => firmaOf(S.fk);
@@ -914,6 +915,8 @@
         <td class="small">${esc(b.Title)}</td>
         <td><select data-f="Rolle">${Object.keys(ROLLEN).map(r => `<option ${r === b.Rolle ? "selected" : ""}>${r}</option>`).join("")}</select></td>
         <td><select data-f="Aktiv"><option ${b.Aktiv !== "Nein" ? "selected" : ""}>Ja</option><option ${b.Aktiv === "Nein" ? "selected" : ""}>Nein</option></select></td>
+        <td>${b.Rolle === "Administrator" ? '<span class="small muted">immer</span>'
+          : `<select data-f="Finanzen"><option ${b.Finanzen === "Ja" ? "selected" : ""}>Ja</option><option ${b.Finanzen !== "Ja" ? "selected" : ""}>Nein</option></select>`}</td>
         <td class="r">${istIch(b) ? "" : `<button type="button" class="icon" data-del title="Benutzer entfernen">✕</button>`}</td>
       </tr>`).join("");
     const matrix = `<table class="tbl matrix"><thead><tr><th>Recht</th>${Object.keys(ROLLEN).map(r => `<th>${r}</th>`).join("")}</tr></thead><tbody>
@@ -922,10 +925,11 @@
     const absender = [...new Set(S.firmen.map(f => f.d.MailFrom || C.mailFrom).filter(Boolean))];
     return `<div class="card" id="benutzerCard">
       <div class="row between"><h3>Benutzer &amp; Berechtigungen</h3><button class="btn primary" id="uAdd" type="button">+ Benutzer aus Entra ID</button></div>
-      <div class="tblwrap"><table class="tbl"><thead><tr><th>Name</th><th>Konto</th><th>Rolle</th><th>Aktiv</th><th></th></tr></thead>
-        <tbody id="uTb">${rows || `<tr><td colspan="5" class="empty">Keine Benutzer.</td></tr>`}</tbody></table></div>
+      <div class="tblwrap"><table class="tbl"><thead><tr><th>Name</th><th>Konto</th><th>Rolle</th><th>Aktiv</th><th title="Darf die private Finanzen-Seite sehen">Finanzen</th><th></th></tr></thead>
+        <tbody id="uTb">${rows || `<tr><td colspan="6" class="empty">Keine Benutzer.</td></tr>`}</tbody></table></div>
       <h3 style="margin-top:18px">Was darf welche Rolle?</h3>
       <div class="tblwrap">${matrix}</div>
+      <p class="small muted"><strong>Finanzen:</strong> Mit „Ja“ sieht der Benutzer die Seite „Finanzen (privat)“ – z. B. für den Ehepartner mit Rolle „Lesen“. Zusätzlich braucht die Person in SharePoint Zugriff auf die Bibliothek „${esc(C.listPrefix)}Privat“ (siehe Finanzen-Seite → „Zugriff &amp; Schutz“).</p>
       <p class="small muted">Beim Hinzufügen wird der Benutzer Mitglied der Microsoft-365-Gruppe der SharePoint-Site und bekommt damit Zugriff auf die Daten.
         Die Rollen steuern, was die App anzeigt und erlaubt – in SharePoint selbst können Gruppenmitglieder die Listen bearbeiten.<br>
         Wer <strong>per E-Mail senden</strong> soll, braucht zusätzlich „Senden als“ auf dem Absender-Postfach der jeweiligen Firma:</p>
@@ -1150,7 +1154,7 @@
     finanzen: sub => (window.EFFinanzen && can("finanzen") ? window.EFFinanzen.render(finanzApi, sub) : dashboard()) };
 
   // Schnittstelle für js/finanzen.js
-  const finanzApi = { S, G, P, can, view, setNav, esc, eur, busy, toast, today };
+  const finanzApi = { S, G, P, can, view, setNav, esc, eur, busy, toast, today, renderNav: () => renderNav() };
 
   function route() {
     if (!S.me) { noAccess(); return; }

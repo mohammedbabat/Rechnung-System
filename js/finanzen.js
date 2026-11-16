@@ -223,19 +223,32 @@
   const LOCAL_KEY = "ef_finanzen_lokal";
   const FARBE = { netto: "#7B2FBE", sv: "#A898C8", est: "#F97316", gewst: "#DB2777", grenze: "#DC2626", hilf: "#94A3B8" };
   let STORE = null, LOADED = false, LOAD_ERR = null, CUR = null, API = null;
+  // Speicherort: SharePoint-Bibliothek EF_Privat (eigene Berechtigungen, nur Inhaber + Ehepartner)
+  let ZUGRIFF = null, KEIN_ZUGRIFF = false, MIGRIERT = false;
+  const istAdmin = api => !!api.S.me && api.S.me.Rolle === "Administrator";
 
   const $ = s => document.querySelector(s);
   const lokalLesen = () => { try { return JSON.parse(window.localStorage.getItem(LOCAL_KEY) || "null"); } catch (_) { return null; } };
   const lokalSchreiben = s => { try { window.localStorage.setItem(LOCAL_KEY, JSON.stringify(s)); return true; } catch (_) { return false; } };
 
   async function laden(api) {
+    KEIN_ZUGRIFF = false; MIGRIERT = false; ZUGRIFF = null;
     try {
-      STORE = (await api.G.privatLaden()) || { version: 1, jahre: {} };
+      const r = await api.G.privatLaden(istAdmin(api));     // Administrator legt die Bibliothek bei Bedarf an
+      if (!r.bibliothek) KEIN_ZUGRIFF = true;
+      STORE = r.daten;
+      if (!STORE && istAdmin(api)) {                         // ältere Daten aus dem OneDrive einmalig übernehmen
+        const alt = await api.G.onedriveAltLaden();
+        if (alt) { STORE = alt; MIGRIERT = true; }
+      }
+      try { ZUGRIFF = await api.G.privatZugriff(); } catch (_) { ZUGRIFF = null; }
       LOAD_ERR = null;
     } catch (e) {
-      LOAD_ERR = e.message;
-      STORE = lokalLesen() || { version: 1, jahre: {} };
+      if (/403|accessDenied|404|itemNotFound/i.test(e.message)) KEIN_ZUGRIFF = true;
+      else LOAD_ERR = e.message;
+      STORE = lokalLesen();
     }
+    STORE = STORE || { version: 1, jahre: {} };
     if (!STORE.jahre) STORE.jahre = {};
     LOADED = true;
   }
@@ -272,6 +285,14 @@
       api.busy(async () => { await laden(api); render(api, sub); });
       return;
     }
+    if (KEIN_ZUGRIFF) {
+      api.view(`<div class="head"><h1>Finanzen <span class="muted">· privat</span></h1></div>
+        <div class="card noaccess"><h2>Kein Zugriff auf die Finanzdaten</h2>
+        <p>Die Finanzdaten liegen in SharePoint in der geschützten Bibliothek <strong>${api.esc(api.G.privatBibliothek())}</strong>.</p>
+        <p class="muted">Ein Administrator muss dein Konto <strong>${api.esc((api.S.me && api.S.me.Title) || "")}</strong> dort berechtigen
+          (Finanzen-Seite → „Zugriff &amp; Schutz“).</p></div>`);
+      return;
+    }
     const heute = api.today().slice(0, 4);
     const jahr = sub && /^\d{4}$/.test(sub) ? sub : (CUR && CUR.jahr) || heute;
     CUR = Object.assign({}, DEFAULT, STORE.jahre[jahr] || {}, { jahr });
@@ -286,11 +307,10 @@
       <div class="head"><h1>Finanzen <span class="muted">· privat</span></h1><span class="grow"></span>
         <select id="fiJahr">${jahre.map(y => `<option ${y === jahr ? "selected" : ""}>${y}</option>`).join("")}</select>
         <button class="btn primary" id="fiSave" type="button">Speichern</button></div>
-      ${LOAD_ERR ? `<div class="card warnbox"><strong>OneDrive nicht erreichbar:</strong> ${api.esc(LOAD_ERR)}<br>
-        Die Daten werden vorerst nur in diesem Browser gespeichert. Bitte in Entra die delegierte Berechtigung <strong>Files.ReadWrite</strong> hinzufügen und Administratorzustimmung erteilen.</div>` : ""}
-      <p class="small muted">Nur für dich sichtbar: Die Angaben liegen in deinem eigenen OneDrive (<code>Ein-Facher-Privat/finanzen.json</code>), nicht in SharePoint.
-        Alle Werte sind <strong>Schätzungen</strong> nach vereinfachter Berechnung – keine Steuerberatung.</p>
-
+      ${LOAD_ERR ? `<div class="card warnbox"><strong>SharePoint nicht erreichbar:</strong> ${api.esc(LOAD_ERR)}<br>
+        Die Daten werden vorerst nur in diesem Browser gespeichert.</div>` : ""}
+      ${MIGRIERT ? `<div class="card infobox">Deine bisherigen Angaben aus dem OneDrive wurden übernommen. Klicke auf <strong>Speichern</strong>, um sie in SharePoint abzulegen.</div>` : ""}
+      ${statusHtml(api)}
       <div class="card"><h3>Haushalt</h3><div class="grid g4">
         ${feld("kinder", "Kinder (mit Kindergeld)")}
         ${feld("kist", "Kirchensteuer", { options: [["keine", "keine"], ["eine", "eine Person (≈ hälftig)"], ["beide", "beide"]] })}
@@ -322,7 +342,8 @@
         ${feld("vorauszahlungen", "ESt-Vorauszahlungen ans Finanzamt €")}
       </div><p class="small muted" id="fiAutoInfo"></p></div>
 
-      <div id="fiRes"></div>`);
+      <div id="fiRes"></div>
+      ${istAdmin(api) ? zugriffHtml(api) : ""}`);
 
     const onChange = e => {
       const k = e.target.dataset.k;
@@ -345,14 +366,54 @@
     API.busy(async () => {
       try {
         await API.G.privatSpeichern(STORE);
+        const neu = !ZUGRIFF;
+        if (neu) { try { ZUGRIFF = await API.G.privatZugriff(); } catch (_) { /* egal */ } }
+        MIGRIERT = false;
         LOAD_ERR = null;
         $("#fiSave").textContent = "Speichern";
-        API.toast("In OneDrive gespeichert (Ein-Facher-Privat/finanzen.json)");
+        API.toast("In SharePoint gespeichert (" + API.G.privatBibliothek() + ")");
+        if (neu) render(API, CUR.jahr);
       } catch (e) {
         lokalSchreiben(STORE);
         API.toast("OneDrive-Fehler – nur in diesem Browser gespeichert: " + e.message, "err");
       }
     });
+  }
+
+  // ---------- Zugriff & Schutz der Bibliothek EF_Privat ----------
+  function statusHtml(api) {
+    const bib = api.esc(api.G.privatBibliothek());
+    if (!ZUGRIFF) return `<p class="small muted">Gespeichert wird in SharePoint in der Bibliothek <strong>${bib}</strong> (wird beim ersten Speichern angelegt).
+      Alle Werte sind <strong>Schätzungen</strong> nach vereinfachter Berechnung – keine Steuerberatung.</p>`;
+    const namen = ZUGRIFF.personen.map(p => p.name).join(", ");
+    if (ZUGRIFF.offen.length && istAdmin(api)) return `<div class="card warnbox">⚠️ <strong>Noch nicht geschützt:</strong> Die Bibliothek ${bib} ist noch für
+      <strong>${api.esc(ZUGRIFF.offen.map(g => g.name).join(", "))}</strong> sichtbar – also für alle Benutzer der Site. Schritte siehe unten bei „Zugriff &amp; Schutz“.</div>`;
+    return `<p class="small muted">🔒 Gespeichert in SharePoint, Bibliothek <strong>${bib}</strong>${namen ? " – Zugriff: <strong>" + api.esc(namen) + "</strong>" : ""}.
+      Alle Werte sind <strong>Schätzungen</strong> nach vereinfachter Berechnung – keine Steuerberatung.</p>`;
+  }
+
+  function zugriffHtml(api) {
+    const bib = api.esc(api.G.privatBibliothek());
+    const z = ZUGRIFF;
+    const berechtigte = api.S.benutzer.filter(b => b.Aktiv !== "Nein" && (b.Rolle === "Administrator" || b.Finanzen === "Ja"));
+    const hat = email => z && z.personen.some(p => p.email && p.email === String(email || "").toLowerCase());
+    return `<div class="card" id="fgCard"><h3>🔒 Zugriff &amp; Schutz</h3>
+      ${!z ? `<p class="small muted">Die Bibliothek ${bib} wird beim ersten Speichern angelegt. Danach erscheinen hier die Schritte zum Schützen.</p>` : `
+      <div class="tblwrap"><table class="tbl fitbl"><thead><tr><th>Wer</th><th>Zugriff auf ${bib}</th></tr></thead><tbody>
+        ${z.offen.map(g => `<tr><td>${api.esc(g.name)} <span class="small muted">(Gruppe)</span></td><td class="neg">offen – entfernen</td></tr>`).join("")}
+        ${berechtigte.map(b => `<tr><td>${api.esc(b.Name)} <span class="small muted">${api.esc(b.Title)}</span></td>
+          <td class="${hat(b.Title) || z.offen.length ? "pos" : "neg"}">${hat(b.Title) ? "✓ direkt berechtigt" : z.offen.length ? "über Gruppe" : "fehlt – hinzufügen"}</td></tr>`).join("")}
+      </tbody></table></div>
+      <p class="small"><strong>Einmalig in SharePoint einrichten</strong> (Seite → Zahnrad → <em>Websiteinhalte</em> → ${bib} → Zahnrad → <em>Bibliothekseinstellungen</em> → <em>Berechtigungen für diese Dokumentbibliothek</em>):</p>
+      <ol class="small steps">
+        <li><em>Berechtigungsvererbung beenden</em> → OK</li>
+        <li><em>Berechtigungen erteilen</em> → dich und deine Frau eintragen → Berechtigungsstufe <strong>Bearbeiten</strong> → Einladung abwählen → Freigeben</li>
+        <li>Die Gruppen <strong>Mitglieder</strong> und <strong>Besucher</strong> anhaken → <em>Benutzerberechtigungen entfernen</em></li>
+        <li>Diese Seite neu laden – oben muss dann „🔒 Gespeichert in SharePoint“ stehen.</li>
+      </ol>
+      <p class="small muted">Die Person braucht außerdem unter Einstellungen → Benutzer <strong>Finanzen = Ja</strong>, damit die Seite in der App erscheint.
+        Besitzer der Site (Website-Administratoren) behalten technisch immer Zugriff.</p>`}
+    </div>`;
   }
 
   // ---------- Gehaltsabrechnung hochladen / Hochrechnung aufs Jahr ----------
