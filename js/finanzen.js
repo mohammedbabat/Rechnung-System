@@ -28,6 +28,13 @@
   }
 
   const ANP = 1230;            // Arbeitnehmer-Pauschbetrag
+  const HO_TAG = 6, HO_MAX = 1260;   // Homeoffice-Pauschale je Tag / Jahr
+  // Entfernungspauschale: ab 2026 0,38 € ab dem 1. km; bis 2025 0,30 € (km 1–20) + 0,38 € (ab km 21)
+  function entfernung(km, tage, jahr) {
+    km = Math.max(0, Math.floor(num(km))); tage = Math.max(0, Math.floor(num(tage)));
+    const proTag = Number(jahr) >= 2026 ? km * 0.38 : Math.min(km, 20) * 0.30 + Math.max(0, km - 20) * 0.38;
+    return Math.round(proTag * tage * 100) / 100;
+  }
   const SAP = 36;              // Sonderausgaben-Pauschbetrag je Person
   const ENTLASTUNG_II = 4260;  // Entlastungsbetrag Alleinerziehende (Steuerklasse II)
   const GEW_FREIBETRAG = 24500;
@@ -128,7 +135,9 @@
     const ps = pi.perioden && pi.perioden.length ? pi.perioden : [{ von: 1, bis: 12, kl: normKl(pi.stkl) }];
     const kl = klasseImMonat(ps, 12);                     // aktuelle Klasse (Dezember)
     const wechsel = new Set(ps.map(x => x.kl)).size > 1;
-    const wk = brutto > 0 ? Math.min(brutto, Math.max(ANP, num(pi.wk))) : 0;
+    const fahrt = entfernung(pi.km, pi.tage, pi.jahr), ho = Math.min(HO_MAX, Math.max(0, Math.floor(num(pi.hoTage))) * HO_TAG);
+    const wkEinzeln = r2(fahrt + ho + Math.max(0, num(pi.wk)));
+    const wk = brutto > 0 ? Math.min(brutto, Math.max(ANP, wkEinzeln)) : 0;
     const s = svSchaetzung(brutto, p, kinderlos);
     const svGeschaetzt = leer(pi.sv);
     const svGes = svGeschaetzt ? s.gesamt : Math.max(0, num(pi.sv));
@@ -142,7 +151,7 @@
     const lst1 = leer(pi.lst) ? lstNachKlassen() : Math.max(0, num(pi.lst));
     const lst2Geschaetzt = leer(pi.lst2) && b2 > 0;
     const lst2 = b2 <= 0 ? 0 : (leer(pi.lst2) ? lohnsteuer(b2, "6", p, vors2) : Math.max(0, num(pi.lst2)));
-    return { name: pi.name, kl, perioden: ps, wechsel, klassenText: periodenText(ps), b1, b2, brutto, wk, wkPauschal: wk === Math.min(brutto, ANP), einkuenfte: brutto - wk,
+    return { name: pi.name, kl, perioden: ps, wechsel, klassenText: periodenText(ps), b1, b2, brutto, wk, wkPauschal: wkEinzeln < ANP, wkEinzeln, fahrt, ho, wkSonst: Math.max(0, num(pi.wk)), einkuenfte: brutto - wk,
              svGes, svAbz, svGeschaetzt, vors1, lst1, lst2, lst: lst1 + lst2, lstGeschaetzt: lst1Geschaetzt || lst2Geschaetzt };
   }
 
@@ -175,7 +184,7 @@
     const { p, basisJahr, exakt } = paramFor(i.jahr);
     const kinder = Math.max(0, Math.floor(num(i.kinder)));
     const kinderlos = kinder === 0;
-    const pp = n => person({ name: i[`p${n}_name`], stkl: i[`p${n}_stkl`], perioden: perioden(i, n), brutto: i[`p${n}_brutto`], wk: i[`p${n}_wk`], sv: i[`p${n}_sv`],
+    const pp = n => person({ name: i[`p${n}_name`], stkl: i[`p${n}_stkl`], perioden: perioden(i, n), brutto: i[`p${n}_brutto`], wk: i[`p${n}_wk`], km: i[`p${n}_km`], tage: i[`p${n}_tage`], hoTage: i[`p${n}_hoTage`], jahr: i.jahr, sv: i[`p${n}_sv`],
       lst: i[`p${n}_lst`], brutto2: i[`p${n}_brutto2`], lst2: i[`p${n}_lst2`] }, p, kinderlos);
     const p1 = pp(1), p2 = pp(2);
     const inhaber = i.inhaber === "2" ? 2 : 1;
@@ -256,8 +265,8 @@
   // ---------- Oberfläche ----------
   const DEFAULT = {
     kinder: 1, kist: "keine", kistSatz: 9,
-    p1_name: "Mohammed", p1_stkl: "4", p1_perioden: [], p1_abr: [], p1_brutto: "", p1_wk: "", p1_sv: "", p1_lst: "", p1_brutto2: "", p1_lst2: "",
-    p2_name: "Ehefrau", p2_stkl: "4", p2_perioden: [], p2_abr: [], p2_brutto: "", p2_wk: "", p2_sv: "", p2_lst: "", p2_brutto2: "", p2_lst2: "",
+    p1_name: "Mohammed", p1_stkl: "4", p1_perioden: [], p1_abr: [], p1_brutto: "", p1_wk: "", p1_km: "", p1_tage: "", p1_hoTage: "", p1_sv: "", p1_lst: "", p1_brutto2: "", p1_lst2: "",
+    p2_name: "Ehefrau", p2_stkl: "4", p2_perioden: [], p2_abr: [], p2_brutto: "", p2_wk: "", p2_km: "", p2_tage: "", p2_hoTage: "", p2_sv: "", p2_lst: "", p2_brutto2: "", p2_lst2: "",
     inhaber: "1", quelle: "ef", einnahmenManuell: "", ausgaben: "", hebesatz: 500,
     vorauszahlungen: "", weitereAbzuege: "", kitaKosten: "", kitaEssen: "", kitaZuschuss: ""
   };
@@ -368,7 +377,10 @@
           ${feld(`p${n}_brutto`, "Bruttoarbeitslohn im Jahr € (Hauptjob)", { ph: "0" })}
           ${feld(`p${n}_lst`, "Lohnsteuer + Soli + KiSt im Jahr € (leer = Schätzung)", { ph: "automatisch" })}
           ${feld(`p${n}_sv`, "Sozialversicherung AN-Anteil € (leer = Schätzung)", { ph: "automatisch" })}
-          ${feld(`p${n}_wk`, "Werbungskosten € (leer = Pauschale 1.230)", { ph: "1230" })}
+          ${feld(`p${n}_km`, "Weg zur Arbeit km (einfache Strecke)", { ph: "0" })}
+          ${feld(`p${n}_tage`, "Arbeitstage im Büro/Jahr (mit Auto/Bus/Rad)", { ph: "0" })}
+          ${feld(`p${n}_hoTage`, "Homeoffice-Tage im Jahr", { ph: "0" })}
+          ${feld(`p${n}_wk`, "Sonstige Werbungskosten € (Arbeitsmittel, Handy, Kontoführung …)", { ph: "0" })}
           ${feld(`p${n}_brutto2`, "Brutto 2. Arbeitgeber € (z. B. früherer Job)", { ph: "0" })}
           ${feld(`p${n}_lst2`, "Lohnsteuer 2. Arbeitgeber € (leer = Klasse 6 geschätzt)", { ph: "automatisch" })}
         </div>${abrListeHtml(n)}<p class="small muted">Werte stehen auf der Lohnsteuerbescheinigung bzw. in den Jahreswerten der Gehaltsabrechnung. Minijobs mit Pauschalsteuer nicht eintragen.</p></div>`).join("")}
@@ -515,6 +527,16 @@
     return `<p class="small muted">🔒 Gespeichert in SharePoint, Bibliothek <strong>${bib}</strong>${namen ? " – Zugriff: <strong>" + api.esc(namen) + "</strong>" : ""}.
       Alle Werte sind <strong>Schätzungen</strong> nach vereinfachter Berechnung – keine Steuerberatung.</p>`;
   }
+
+  function wkText(pr) {
+    const t = [];
+    if (pr.fahrt) t.push(`Fahrten ${eur0(pr.fahrt)}`);
+    if (pr.ho) t.push(`Homeoffice ${eur0(pr.ho)}`);
+    if (pr.wkSonst) t.push(`Sonstige ${eur0(pr.wkSonst)}`);
+    const summe = t.length ? t.join(" + ") : "";
+    return pr.wkPauschal ? (summe ? `Pauschale 1.230 € (eigene Kosten nur ${summe} = ${eur0(pr.wkEinzeln)})` : "Pauschale") : summe;
+  }
+  const eur0 = x => Number(x || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
 
   function zugriffHtml(api) {
     const bib = api.esc(api.G.privatBibliothek());
@@ -861,9 +883,9 @@
       <div class="grid fi2">
         <div class="card"><h3>Berechnung ${esc(CUR.jahr)} – Zusammenveranlagung</h3><div class="tblwrap"><table class="tbl fitbl"><tbody>
           ${zeile(`Bruttolohn ${n1}`, eur(r.p1.brutto), "", r.p1.b2 ? `davon 2. Arbeitgeber ${eur(r.p1.b2)}` : "")}
-          ${zeile(`− Werbungskosten ${n1}`, eur(r.p1.wk), "", r.p1.wkPauschal ? "Pauschale" : "")}
+          ${zeile(`− Werbungskosten ${n1}`, eur(r.p1.wk), "", wkText(r.p1))}
           ${zeile(`Bruttolohn ${n2}`, eur(r.p2.brutto), "", r.p2.b2 ? `davon 2. Arbeitgeber ${eur(r.p2.b2)}` : "")}
-          ${zeile(`− Werbungskosten ${n2}`, eur(r.p2.wk), "", r.p2.wkPauschal ? "Pauschale" : "")}
+          ${zeile(`− Werbungskosten ${n2}`, eur(r.p2.wk), "", wkText(r.p2))}
           ${zeile("+ Gewinn Einzelunternehmen", eur(r.gewinn), "", `Einnahmen ${eur(r.einnahmen)} − Ausgaben ${eur(r.ausgaben)}`)}
           ${zeile("= Gesamtbetrag der Einkünfte", eur(r.gde), "sum")}
           ${zeile("− Vorsorgeaufwendungen", eur(r.vorsorge), "", (r.p1.svGeschaetzt || r.p2.svGeschaetzt) ? "Renten-, Kranken-, Pflegeversicherung (teilweise geschätzt)" : "Renten-, Kranken-, Pflegeversicherung")}
