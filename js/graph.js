@@ -266,9 +266,11 @@
       const g2 = pm.grantedToV2 || {}, rolle = (pm.roles || []).join(", ");
       if (g2.siteGroup) gruppen.push({ name: g2.siteGroup.displayName || g2.siteGroup.loginName || "Gruppe", rolle });
       else if (g2.group) gruppen.push({ name: g2.group.displayName || "Gruppe", rolle });
-      else if (g2.user || (pm.grantedTo && pm.grantedTo.user)) {
-        const u = g2.user || pm.grantedTo.user;
-        personen.push({ name: u.displayName || u.email || "?", email: (u.email || "").toLowerCase(), rolle });
+      else if (g2.user || g2.siteUser || (pm.grantedTo && pm.grantedTo.user)) {
+        const u = g2.user || (pm.grantedTo && pm.grantedTo.user) || g2.siteUser;
+        const anmeldename = String((g2.siteUser && g2.siteUser.loginName) || "").toLowerCase();
+        personen.push({ name: u.displayName || u.email || "?", email: String(u.email || "").toLowerCase(),
+          id: String((g2.user && g2.user.id) || "").toLowerCase(), login: anmeldename, rolle });
       }
     });
     const offen = gruppen.filter(gr => /mitglied|member|besucher|visitor|leser|reader|jeder|everyone/i.test(gr.name));
