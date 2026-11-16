@@ -41,18 +41,21 @@
   const login = () => app().loginRedirect({ scopes: SCOPES });
   const logout = () => app().logoutRedirect({ account });
 
-  async function token() {
+  // Eigene Berechtigung nur für die private Finanzen-Seite (OneDrive des angemeldeten Benutzers)
+  const FILE_SCOPES = ["Files.ReadWrite"];
+
+  async function token(scopes = SCOPES) {
     try {
-      const r = await app().acquireTokenSilent({ scopes: SCOPES, account });
+      const r = await app().acquireTokenSilent({ scopes, account });
       return r.accessToken;
     } catch (e) {
-      await app().acquireTokenRedirect({ scopes: SCOPES, account });
+      await app().acquireTokenRedirect({ scopes, account });
       throw new Error("Anmeldung wird erneuert …");
     }
   }
 
   async function g(path, opts = {}) {
-    const t = await token();
+    const t = await token(opts.scopes || SCOPES);
     const url = path.startsWith("https://") ? path : GRAPH + path;
     const headers = Object.assign({ Authorization: "Bearer " + t }, opts.headers || {});
     let body = opts.body;
@@ -209,8 +212,32 @@
     }
   }
 
+  // ---------- Private Daten im eigenen OneDrive ----------
+  const PRIVAT_PFAD = "Ein-Facher-Privat/finanzen.json";
+
+  async function privatLaden() {
+    let meta;
+    try {
+      meta = await g(`/me/drive/root:/${PRIVAT_PFAD}?select=id,@microsoft.graph.downloadUrl`, { scopes: FILE_SCOPES });
+    } catch (e) {
+      if (/404|itemNotFound/i.test(e.message)) return null;   // noch keine Datei
+      throw e;
+    }
+    const url = meta["@microsoft.graph.downloadUrl"];
+    if (!url) return null;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("OneDrive-Download fehlgeschlagen: " + res.status);
+    const txt = await res.text();
+    return txt ? JSON.parse(txt) : null;
+  }
+
+  async function privatSpeichern(obj) {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+    return g(`/me/drive/root:/${PRIVAT_PFAD}:/content`, { method: "PUT", body: blob, headers: { "Content-Type": "application/json" }, scopes: FILE_SCOPES });
+  }
+
   window.EFGraph = {
     init, login, logout, account: () => account, items, create, update, remove, ensureLists, checkSchema, uploadPdf, sendMail,
-    users, addSiteMember, removeSiteMember
+    users, addSiteMember, removeSiteMember, privatLaden, privatSpeichern
   };
 })();
