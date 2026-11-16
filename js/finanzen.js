@@ -186,7 +186,15 @@
     const gw = gewerbe(gewinn, i.hebesatz);
     const kistSatz = num(i.kistSatz) || 9;
     const kistFaktor = KIST_FAKTOR[i.kist] ?? 0;
-    const weitere = Math.max(0, num(i.weitereAbzuege));
+    const weitere0 = Math.max(0, num(i.weitereAbzuege));
+    // Kinderbetreuung (§ 10 Abs. 1 Nr. 5 EStG): 80 % der Kosten, max. 4.800 € je Kind.
+    // Steuerfreier Arbeitgeberzuschuss (§ 3 Nr. 33 EStG) mindert die absetzbaren Kosten.
+    // Essensgeld ist nie absetzbar – der steuerfreie Zuschuss darf es aber abdecken.
+    const kitaKosten = Math.max(0, num(i.kitaKosten)), kitaEssen = Math.min(kitaKosten, Math.max(0, num(i.kitaEssen)));
+    const kitaZuschuss = Math.max(0, num(i.kitaZuschuss));
+    const kitaBasis = r2(Math.max(0, kitaKosten - kitaEssen - kitaZuschuss));
+    const betreuung = r2(Math.min(kinder * 4800, 0.8 * kitaBasis));
+    const weitere = r2(weitere0 + betreuung);
     const kgJahr = kinder * p.kg * 12;
 
     // Zusammenveranlagung
@@ -230,7 +238,7 @@
 
     return { p, basisJahr, exakt, kinder, kgJahr, p1, p2, inhaber, einnahmen, ausgaben, gewinn, gw, gde, vorsorge,
              zvE, zus, ohneU, estUnternehmen, steuerUnternehmen, einzeln, summeEinzeln, splittingVorteil: r2(summeEinzeln - zus.summe),
-             kombis, faktor, gezahlt, ergebnis, bruttoGesamt, netto, grenz, durchschnitt, weitere, kistFaktor, kistSatz };
+             kombis, faktor, gezahlt, ergebnis, bruttoGesamt, netto, grenz, durchschnitt, weitere, weitere0, betreuung, kitaKosten, kitaEssen, kitaZuschuss, kitaBasis, kistFaktor, kistSatz };
   }
 
   // Berechnung mit einem anderen Gewinn (für Grafik und Schwellen)
@@ -251,7 +259,7 @@
     p1_name: "Mohammed", p1_stkl: "4", p1_perioden: [], p1_abr: [], p1_brutto: "", p1_wk: "", p1_sv: "", p1_lst: "", p1_brutto2: "", p1_lst2: "",
     p2_name: "Ehefrau", p2_stkl: "4", p2_perioden: [], p2_abr: [], p2_brutto: "", p2_wk: "", p2_sv: "", p2_lst: "", p2_brutto2: "", p2_lst2: "",
     inhaber: "1", quelle: "ef", einnahmenManuell: "", ausgaben: "", hebesatz: 500,
-    vorauszahlungen: "", weitereAbzuege: ""
+    vorauszahlungen: "", weitereAbzuege: "", kitaKosten: "", kitaEssen: "", kitaZuschuss: ""
   };
   const LOCAL_KEY = "ef_finanzen_lokal";
   const FARBE = { netto: "#7B2FBE", sv: "#A898C8", est: "#F97316", gewst: "#DB2777", grenze: "#DC2626", hilf: "#94A3B8" };
@@ -343,7 +351,14 @@
         ${feld("kist", "Kirchensteuer", { options: [["keine", "keine"], ["eine", "eine Person (≈ hälftig)"], ["beide", "beide"]] })}
         ${feld("kistSatz", "Kirchensteuersatz % (NRW 9)")}
         ${feld("weitereAbzuege", "Weitere Abzüge € (Spenden, außergew. Belastungen …)")}
-      </div></div>
+        ${feld("kitaKosten", "Kita-Kosten im Jahr € gesamt (Beitrag + Essen)", { ph: "0" })}
+        ${feld("kitaEssen", "davon Essensgeld €", { ph: "0" })}
+        ${feld("kitaZuschuss", "Kitazuschuss vom Arbeitgeber im Jahr € (steuerfrei)", { ph: "0" })}
+      </div>
+      <p class="small muted">Ein <strong>Kitazuschuss</strong> vom Arbeitgeber ist steuer- und sozialabgabenfrei (§ 3 Nr. 33 EStG) und steht nicht im Steuerbrutto –
+        er wird hier also nicht als Lohn gezählt. Er darf Kita-Beitrag <strong>und</strong> Essen abdecken. Absetzbar sind nur 80 % des Kita-Beitrags
+        <strong>ohne Essen</strong>, abzüglich des Zuschusses (max. 4.800 € je Kind). Ein <strong>steuerpflichtiger</strong> Kinderzuschlag (z. B. laut Tarifvertrag)
+        ist schon im Steuerbrutto der Gehaltsabrechnung enthalten – dann hier nichts eintragen.</p></div>
 
       <div class="grid fi2">
         ${[1, 2].map(n => `<div class="card"><div class="row between"><h3>${n === 1 ? "Person 1" : "Person 2 (Ehepartner)"}</h3>
@@ -848,7 +863,8 @@
           ${zeile("= Gesamtbetrag der Einkünfte", eur(r.gde), "sum")}
           ${zeile("− Vorsorgeaufwendungen", eur(r.vorsorge), "", (r.p1.svGeschaetzt || r.p2.svGeschaetzt) ? "Renten-, Kranken-, Pflegeversicherung (teilweise geschätzt)" : "Renten-, Kranken-, Pflegeversicherung")}
           ${zeile("− Sonderausgaben-Pauschbetrag", eur(2 * SAP))}
-          ${r.weitere ? zeile("− Weitere Abzüge", eur(r.weitere)) : ""}
+          ${r.betreuung ? zeile("− Kinderbetreuungskosten", eur(r.betreuung), "", `80 % von ${eur(r.kitaBasis)} (Kosten ${eur(r.kitaKosten)}${r.kitaEssen ? ` − Essen ${eur(r.kitaEssen)}` : ""}${r.kitaZuschuss ? ` − Arbeitgeberzuschuss ${eur(r.kitaZuschuss)}` : ""}), max. 4.800 € je Kind`) : ""}
+          ${r.weitere0 ? zeile("− Weitere Abzüge", eur(r.weitere0)) : ""}
           ${zeile("= Zu versteuerndes Einkommen", eur(r.zvE), "sum", z.kfbGuenstiger ? `abzgl. Kinderfreibetrag ${eur(r.kinder * r.p.kfb)} → ${eur(Math.max(0, r.zvE - r.kinder * r.p.kfb))}` : "")}
           ${zeile("Einkommensteuer (Splittingtarif)", eur(z.tariflich), "", r.kinder ? (z.kfbGuenstiger ? "Kinderfreibetrag ist günstiger als Kindergeld" : "Kindergeld ist günstiger als Kinderfreibetrag") : "")}
           ${z.anr ? zeile("− Anrechnung Gewerbesteuer (§ 35 EStG)", eur(z.anr)) : ""}
