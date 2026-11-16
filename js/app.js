@@ -66,8 +66,7 @@
     ["storno", "Rechnungen stornieren"],
     ["loeschen", "Kunden und Artikel löschen"],
     ["einstellungen", "Einstellungen und Firmendaten"],
-    ["benutzer", "Benutzer und Berechtigungen verwalten"],
-    ["finanzen", "Private Finanzen & Steuerübersicht (eigene Daten im eigenen OneDrive)"]
+    ["benutzer", "Benutzer und Berechtigungen verwalten"]
   ];
   const ROLLEN = {
     Administrator: RECHTE.map(r => r[0]),
@@ -219,7 +218,6 @@
       h += `<div class="subnav">${s}</div>`;
     }
 
-    if (can("finanzen") && window.EFFinanzen) h += link("finanzen", "Finanzen (privat)");
     if (can("einstellungen") || can("benutzer")) h += link("einstellungen", "Einstellungen");
     $("#nav").innerHTML = h;
     const sel = $("#firmaSel");
@@ -1142,11 +1140,7 @@
 
   // ---------- Router ----------
   const R = { dashboard, rechnungen: s => belegListe("Rechnung", s), angebote: s => belegListe("Angebot", s),
-    kunden: kundenView, artikel: artikelView, einstellungen: () => einstellungen(), beleg: belegEditor,
-    finanzen: sub => (window.EFFinanzen && can("finanzen") ? window.EFFinanzen.render(finanzApi, sub) : dashboard()) };
-
-  // Schnittstelle für js/finanzen.js
-  const finanzApi = { S, G, P, can, view, setNav, esc, eur, busy, toast, today };
+    kunden: kundenView, artikel: artikelView, einstellungen: () => einstellungen(), beleg: belegEditor };
 
   function route() {
     if (!S.me) { noAccess(); return; }

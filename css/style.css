@@ -177,14 +177,3 @@ a.kpi:hover { border-color: var(--accent); }
 .firmtabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .total.sub { border-top: 0; padding-top: 0; margin: 4px 0; font-size: 14px; color: var(--muted); }
 .total.sub + .total:not(.sub) { margin-top: 6px; }
-
-/* Finanzen (privat) */
-.fi2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
-.fi2 > .card, .fi2 > div > .card { margin-bottom: 16px; }
-.fitbl td { padding: 7px 10px; }
-.fitbl tr.sum td { font-weight: 700; border-top: 2px solid var(--line); }
-.fitbl tr.neg td:last-child { color: var(--err); }
-.fitbl tr.pos td:last-child { color: var(--ok); }
-.kpi.ok .v { color: var(--ok); }
-.warnbox { border-color: #F5C26B; background: #FFFBEB; }
-@media (max-width: 860px) { .fi2 { grid-template-columns: 1fr; } }
