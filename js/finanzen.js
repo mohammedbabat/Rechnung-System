@@ -281,7 +281,7 @@
   const FARBE = { netto: "#7B2FBE", sv: "#A898C8", est: "#F97316", gewst: "#DB2777", grenze: "#DC2626", hilf: "#94A3B8" };
   let STORE = null, LOADED = false, LOAD_ERR = null, CUR = null, API = null;
   // Speicherort: SharePoint-Bibliothek EF_Privat (eigene Berechtigungen, nur Inhaber + Ehepartner)
-  let ZUGRIFF = null, KEIN_ZUGRIFF = false;
+  let ZUGRIFF = null, KEIN_ZUGRIFF = false, ZUGRIFF_WISO = null;
   const istAdmin = api => !!api.S.me && api.S.me.Rolle === "Administrator";
 
   const $ = s => document.querySelector(s);
@@ -295,6 +295,7 @@
       if (!r.bibliothek) KEIN_ZUGRIFF = true;
       STORE = r.daten;
       try { ZUGRIFF = await api.G.privatZugriff(); } catch (_) { ZUGRIFF = null; }
+      try { ZUGRIFF_WISO = api.G.wisoZugriff ? await api.G.wisoZugriff() : null; } catch (_) { ZUGRIFF_WISO = null; }
       LOAD_ERR = null;
     } catch (e) {
       if (/403|accessDenied|404|itemNotFound/i.test(e.message)) KEIN_ZUGRIFF = true;
@@ -675,6 +676,18 @@
   }
   const eur0 = x => Number(x || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
 
+  // Schutz der Bibliothek "WISO Steuer Ablage" (PDFs mit allen Steuerwerten)
+  function wisoSchutzHtml(api) {
+    const z = ZUGRIFF_WISO, esc = api.esc;
+    if (!z) return "";
+    const name = esc(api.G.wisoBibliothek());
+    return `<div class="tblwrap"><table class="tbl fitbl"><thead><tr><th>Bibliothek</th><th>Schutz</th></tr></thead><tbody>
+      <tr><td>${name} <a class="small" href="${esc(z.webUrl)}" target="_blank" rel="noopener">öffnen</a>
+        <div class="small muted">PDFs der WISO-Ausfüllhilfe, Ordner je Jahr</div></td>
+        <td class="${z.offen.length ? "neg" : "pos"}">${z.offen.length ? `offen für ${esc(z.offen.map(g => g.name).join(", "))} – entfernen` : "✓ geschützt"}</td></tr>
+    </tbody></table></div>`;
+  }
+
   function zugriffHtml(api) {
     const bib = api.esc(api.G.privatBibliothek());
     const z = ZUGRIFF;
@@ -697,7 +710,8 @@
         ${z.personen.filter(p => !berechtigte.some(b => passt(b, p))).map(p => `<tr><td>${api.esc(p.name)} <span class="small muted">${api.esc(p.email || p.login.split("|").pop())}</span></td>
           <td class="small">in SharePoint berechtigt – in der App nicht als Finanzen-Benutzer eingetragen</td></tr>`).join("")}
       </tbody></table></div>
-      <p class="small"><strong>Einmalig in SharePoint einrichten</strong> (Seite → Zahnrad → <em>Websiteinhalte</em> → ${bib} → Zahnrad → <em>Bibliothekseinstellungen</em> → <em>Berechtigungen für diese Dokumentbibliothek</em>):</p>
+      ${wisoSchutzHtml(api)}
+      <p class="small"><strong>Einmalig in SharePoint einrichten</strong> – für ${bib}${ZUGRIFF_WISO ? ` und „${api.esc(api.G.wisoBibliothek())}“` : ""} (Seite → Zahnrad → <em>Websiteinhalte</em> → Bibliothek → Zahnrad → <em>Bibliothekseinstellungen</em> → <em>Berechtigungen für diese Dokumentbibliothek</em>):</p>
       <ol class="small steps">
         <li><em>Berechtigungsvererbung beenden</em> → OK</li>
         <li><em>Berechtigungen erteilen</em> → dich und deine Frau eintragen → Berechtigungsstufe <strong>Bearbeiten</strong> → Einladung abwählen → Freigeben</li>
@@ -1023,7 +1037,13 @@
     const alle = daten.flatMap(b => b.zeilen).filter(x => !x.info), fertig = alle.filter(x => ok[x.id]).length;
     const wertText = x => x.euro ? API.eur(x.wert) : typeof x.wert === "number" ? `${x.wert.toLocaleString("de-DE")} ${x.einheit || ""}` : esc(x.wert);
     return `<div class="card" id="wisoCard"><div class="row between"><h3>🧾 Ausfüllhilfe WISO Steuer ${esc(CUR.jahr)}</h3>
-        <span class="row gap"><button type="button" class="btn ghost small" id="wisoCsv">CSV herunterladen</button><button type="button" class="btn ghost small" id="wisoPdf">PDF herunterladen</button></span></div>
+        <span class="row gap"><button type="button" class="btn ghost small" id="wisoCsv">CSV herunterladen</button><button type="button" class="btn ghost small" id="wisoPdf">PDF herunterladen</button>
+          <button type="button" class="btn primary small" id="wisoSp">📁 PDF in SharePoint ablegen</button></span></div>
+      ${CUR.wisoAblage ? `<p class="small">Zuletzt abgelegt am ${API.esc(String(CUR.wisoAblage.am || "").split("-").reverse().join("."))}:
+        <a href="${API.esc(CUR.wisoAblage.datei)}" target="_blank" rel="noopener">PDF öffnen</a> ·
+        <a href="${API.esc(CUR.wisoAblage.ordner)}" target="_blank" rel="noopener">Ordner ${API.esc(CUR.jahr)} in „${API.esc(API.G.wisoBibliothek ? API.G.wisoBibliothek() : "WISO Steuer Ablage")}“</a></p>` : ""}
+      ${ZUGRIFF_WISO && ZUGRIFF_WISO.offen.length ? `<div class="hfbox warn">⚠️ Die Bibliothek „${API.esc(API.G.wisoBibliothek())}“ ist noch für <strong>${API.esc(ZUGRIFF_WISO.offen.map(g => g.name).join(", "))}</strong> sichtbar.
+        Bitte wie EF_Privat schützen – Anleitung unten unter „Zugriff &amp; Schutz“.</div>` : ""}
       <p class="small muted">In WISO zuerst <strong>Vorjahr übernehmen</strong> und den <strong>Steuer-Abruf</strong> starten (Löhne, Lohnsteuer, Krankenkasse kommen dann automatisch).
         Danach die Werte unten der Reihe nach übertragen: <strong>📋</strong> kopiert die Zahl, das Häkchen merkt sich, was schon drin ist. Menünamen können je WISO-Version leicht abweichen.</p>
       <div class="wisoprog"><div style="width:${alle.length ? Math.round(fertig / alle.length * 100) : 0}%"></div></div>
@@ -1062,8 +1082,7 @@
       daten().forEach(b => b.zeilen.forEach(x => rows.push([b.titel, b.pfad, b.anlage, (x.ebene ? "  " : "") + x.was, typeof x.wert === "number" ? (x.euro ? zahlDe(x.wert) : String(x.wert).replace(".", ",")) : x.wert, x.euro ? "€" : (x.einheit || ""), plain(x.hinweis), (CUR.wisoOk || {})[x.id] ? "ja" : ""])));
       datei("﻿" + rows.map(r => r.map(q).join(";")).join("\r\n"), `WISO-Ausfuellhilfe-${CUR.jahr}.csv`, "text/csv;charset=utf-8");
     };
-    $("#wisoPdf").onclick = () => {
-      if (!root.pdfMake) return API.toast("PDF-Bibliothek nicht geladen", "err");
+    const pdfDoc = () => {
       const content = [{ text: `Ausfüllhilfe WISO Steuer ${CUR.jahr}`, fontSize: 16, bold: true, margin: [0, 0, 0, 4] },
         { text: `${r.p1.name || "Person 1"} & ${r.p2.name || "Person 2"} · erstellt am ${API.today().split("-").reverse().join(".")} · Schätzung, keine Steuerberatung`, fontSize: 8.5, color: "#666666", margin: [0, 0, 0, 12] }];
       daten().forEach(b => {
@@ -1074,7 +1093,29 @@
           { text: x.euro ? API.eur(x.wert) : `${typeof x.wert === "number" ? x.wert.toLocaleString("de-DE") : x.wert} ${x.einheit || ""}`, alignment: "right" }]) },
           layout: { hLineWidth: () => 0.5, vLineWidth: () => 0, hLineColor: () => "#E8DCFF", paddingTop: () => 4, paddingBottom: () => 4 } });
       });
-      root.pdfMake.createPdf({ pageSize: "A4", pageMargins: [45, 40, 45, 40], content, defaultStyle: { fontSize: 9.5 } }).download(`WISO-Ausfuellhilfe-${CUR.jahr}.pdf`);
+      return root.pdfMake.createPdf({ pageSize: "A4", pageMargins: [45, 40, 45, 40], content, defaultStyle: { fontSize: 9.5 },
+        info: { title: `Ausfüllhilfe WISO Steuer ${CUR.jahr}` } });
+    };
+    const pdfName = `WISO-Ausfuellhilfe-${CUR.jahr}.pdf`;
+    $("#wisoPdf").onclick = () => {
+      if (!root.pdfMake) return API.toast("PDF-Bibliothek nicht geladen", "err");
+      pdfDoc().download(pdfName);
+    };
+    $("#wisoSp").onclick = () => {
+      if (!root.pdfMake) return API.toast("PDF-Bibliothek nicht geladen", "err");
+      API.busy(async () => {
+        try {
+          const blob = await new Promise(res => pdfDoc().getBlob(res));
+          const r2_ = await API.G.wisoAblegen(CUR.jahr, pdfName, new Blob([blob], { type: "application/pdf" }));
+          CUR.wisoAblage = { am: API.today(), datei: r2_.datei, ordner: r2_.ordner };
+          STORE.jahre[CUR.jahr] = Object.assign({}, CUR);
+          try { await API.G.privatSpeichern(STORE); $("#fiSave").textContent = "Speichern"; } catch (_) { $("#fiSave").textContent = "Speichern *"; }
+          const neu = !ZUGRIFF_WISO;
+          try { ZUGRIFF_WISO = await API.G.wisoZugriff(); } catch (_) { /* egal */ }
+          API.toast(`PDF in SharePoint abgelegt: ${API.G.wisoBibliothek()} › ${CUR.jahr}`);
+          if (neu) render(API, CUR.jahr); else renderRes();
+        } catch (e) { API.toast("SharePoint-Fehler: " + e.message, "err"); }
+      });
     };
   }
 

@@ -260,6 +260,11 @@
   async function privatZugriff() {
     const did = await privatDrive(false);
     if (!did) return null;
+    return zugriffAuf(did, privatWebUrl);
+  }
+
+  // Berechtigungen einer Bibliothek auswerten
+  async function zugriffAuf(did, webUrl) {
     const perms = (await g(`/drives/${did}/root/permissions`)).value || [];
     const personen = [], gruppen = [];
     perms.forEach(pm => {
@@ -274,11 +279,39 @@
       }
     });
     const offen = gruppen.filter(gr => /mitglied|member|besucher|visitor|leser|reader|jeder|everyone/i.test(gr.name));
-    return { personen, gruppen, offen, webUrl: privatWebUrl };
+    return { personen, gruppen, offen, webUrl };
+  }
+
+  // ---------- Eigene Dokumentbibliothek "WISO Steuer Ablage" (Ordner je Jahr) ----------
+  const WISO_BIB = "WISO Steuer Ablage";
+  const bibCache = {};
+  async function bibliothek(name, anlegen) {
+    if (bibCache[name]) return bibCache[name];
+    const sid = await site();
+    const finde = async () => ((await g(`/sites/${sid}/drives?$select=id,name,webUrl`)).value || []).find(x => x.name === name);
+    let d = await finde();
+    if (!d && anlegen) {
+      await g(`/sites/${sid}/lists`, { method: "POST", body: { displayName: name, list: { template: "documentLibrary" } } });
+      d = await finde();
+    }
+    if (!d) return null;
+    bibCache[name] = { id: d.id, webUrl: d.webUrl };
+    return bibCache[name];
+  }
+  async function wisoAblegen(jahr, dateiname, blob) {
+    const b = await bibliothek(WISO_BIB, true);
+    const pfad = [String(jahr), dateiname].map(encodeURIComponent).join("/");
+    const item = await g(`/drives/${b.id}/root:/${pfad}:/content`, { method: "PUT", body: blob, headers: { "Content-Type": blob.type || "application/octet-stream" } });
+    return { datei: item.webUrl, ordner: `${b.webUrl}/${encodeURIComponent(String(jahr))}`, bibliothek: b.webUrl };
+  }
+  async function wisoZugriff() {
+    const b = await bibliothek(WISO_BIB, false);
+    return b ? zugriffAuf(b.id, b.webUrl) : null;
   }
 
   window.EFGraph = {
     init, login, logout, account: () => account, items, create, update, remove, ensureLists, checkSchema, uploadPdf, sendMail,
-    users, addSiteMember, removeSiteMember, privatLaden, privatSpeichern, privatZugriff, privatBibliothek: () => PRIVAT_BIB
+    users, addSiteMember, removeSiteMember, privatLaden, privatSpeichern, privatZugriff, privatBibliothek: () => PRIVAT_BIB,
+    wisoAblegen, wisoZugriff, wisoBibliothek: () => WISO_BIB
   };
 })();
