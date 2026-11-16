@@ -323,3 +323,24 @@ main { min-width: 0; }
   .stwert { text-align: left; }
   .stgr > summary .small.muted:not(.stinfo) { display: none; }
 }
+
+/* Ausfüllhilfe WISO Steuer */
+.wisoprog { height: 8px; background: var(--surface2); border-radius: 99px; overflow: hidden; margin: 6px 0 4px; }
+.wisoprog > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .2s; }
+.wisobox { border: 1px solid var(--line); border-radius: 12px; margin-top: 12px; overflow: hidden; }
+.wisokopf { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; justify-content: space-between; padding: 10px 12px; background: var(--surface2); }
+.wisotbl { margin: 0; table-layout: fixed; width: 100%; }
+.wisotbl td:nth-child(2) { overflow-wrap: anywhere; }
+.wisotbl td:nth-child(3) { width: 160px; }
+.wisotbl td { padding: 7px 10px; vertical-align: top; }
+.wisotbl .chkc { width: 28px; }
+.wisotbl .chkc input { width: 18px; height: 18px; accent-color: var(--accent); }
+.wisotbl tr.einz td { font-size: 12.5px; color: var(--text-mid); }
+.wisotbl tr.einz td:nth-child(2) { padding-left: 22px; }
+.wisotbl tr.info td { color: var(--muted); }
+.wisotbl tr.done td:not(.chkc) { opacity: .5; }
+.wisotbl tr.done td:nth-child(2) { text-decoration: line-through; }
+.wisotbl .copy { font-size: 15px; padding: 2px 4px; }
+.nowrap { white-space: nowrap; }
+.row.gap { gap: 6px; flex-wrap: wrap; }
+@media (max-width: 760px) { .wisotbl td { padding: 6px 6px; } .wisotbl .chkc { width: 30px; } .wisotbl td:nth-child(3) { width: 122px; font-size: 13px; } }
