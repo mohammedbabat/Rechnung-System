@@ -1,7 +1,8 @@
 // ============================================================
 // Ein-Facher Rechnungen – Private Finanzen & Steuerübersicht (nur Administrator)
 // Zusammenveranlagung (Splitting), Kinderfreibetrag-Günstigerprüfung, Soli, Kirchensteuer,
-// Gewerbesteuer mit § 35-Anrechnung, Erstattung/Nachzahlung, Rücklage fürs Unternehmen.
+// Gewerbesteuer mit § 35-Anrechnung, Erstattung/Nachzahlung, Rücklage fürs Unternehmen,
+// Lohnsteuer nach Steuerklasse (PAP 2026), Steuerklassen-Vergleich, Grafiken, Empfehlungen.
 // Daten liegen NICHT in SharePoint, sondern im eigenen OneDrive des angemeldeten Benutzers.
 // Alle Ergebnisse sind Schätzungen – keine Steuerberatung.
 // ============================================================
@@ -11,11 +12,12 @@
   // ---------- Steuerparameter je Jahr ----------
   // Tarif nach § 32a EStG: Zone 1 bis gfb = 0; Zone 2 bis z2: (a2*y+1400)*y; Zone 3 bis z3: (a3*z+2397)*z+c3;
   // Zone 4 bis 277.825: 0,42x - c4; Zone 5: 0,45x - c5
+  // w1–w3: Grenzbeträge Lohnsteuer Steuerklasse V/VI (§ 39b Abs. 2 Satz 7 EStG, PAP)
   const PARAM = {
     2025: { gfb: 12096, z2: 17443, a2: 932.30, z3: 68480, a3: 176.64, c3: 1015.13, c4: 10911.92, c5: 19246.67,
-            kfb: 9600, kg: 255, soliFG: 19950, bbgRV: 96600, bbgKV: 66150 },
+            kfb: 9600, kg: 255, soliFG: 19950, bbgRV: 96600, bbgKV: 66150, w1: 13785, w2: 34240, w3: 222260 },
     2026: { gfb: 12348, z2: 17799, a2: 914.51, z3: 69878, a3: 173.10, c3: 1034.87, c4: 11135.63, c5: 19470.38,
-            kfb: 9756, kg: 259, soliFG: 20350, bbgRV: 101400, bbgKV: 69750 }
+            kfb: 9756, kg: 259, soliFG: 20350, bbgRV: 101400, bbgKV: 69750, w1: 14071, w2: 34939, w3: 222260 }
   };
   const JAHRE_MIT_WERTEN = Object.keys(PARAM).map(Number);
   function paramFor(jahr) {
@@ -27,9 +29,15 @@
 
   const ANP = 1230;            // Arbeitnehmer-Pauschbetrag
   const SAP = 36;              // Sonderausgaben-Pauschbetrag je Person
+  const ENTLASTUNG_II = 4260;  // Entlastungsbetrag Alleinerziehende (Steuerklasse II)
   const GEW_FREIBETRAG = 24500;
   const GEW_MESSZAHL = 0.035;
   const ANRECHNUNG_35 = 4.0;
+  const KU_VORJAHR = 25000;    // § 19 UStG: Umsatz Vorjahr
+  const KU_LAUFEND = 100000;   // § 19 UStG: Umsatz laufendes Jahr
+  const VORAUSZAHLUNG_AB = 400; // § 37 Abs. 5 EStG
+  const PFLICHT_NEBENEINK = 410; // § 46 Abs. 2 Nr. 1 EStG
+  const STKL = ["I", "II", "III", "IV", "V", "VI"];
 
   const num = v => { const n = Number(v); return isFinite(n) ? n : 0; };
   const leer = v => v === "" || v === null || v === undefined;
@@ -53,6 +61,31 @@
     return Math.floor(Math.min(est * 0.055, (est - freigrenze) * 0.119) * 100) / 100;
   }
 
+  // ---------- Lohnsteuer nach Steuerklasse (Jahresbetrag, vereinfacht nach PAP) ----------
+  function up56(zx, p) {
+    const diff = (tarif(zx * 1.25, p) - tarif(zx * 0.75, p)) * 2;
+    return Math.max(diff, Math.floor(zx * 0.14));
+  }
+  function mst56(x, p) {
+    if (x > p.w2) {
+      let st = up56(p.w2, p);
+      if (x > p.w3) { st = Math.floor(st + (p.w3 - p.w2) * 0.42); st = Math.floor(st + (x - p.w3) * 0.45); }
+      else st = Math.floor(st + (x - p.w2) * 0.42);
+      return st;
+    }
+    let st = up56(x, p);
+    if (x > p.w1) st = Math.min(st, Math.floor(up56(p.w1, p) + (x - p.w1) * 0.42));
+    return st;
+  }
+  function lohnsteuer(brutto, kl, p, vorsorge) {
+    if (brutto <= 0) return 0;
+    const anp = kl === "VI" ? 0 : ANP, sap = kl === "VI" ? 0 : SAP;
+    const x = Math.floor(Math.max(0, brutto - anp - sap - vorsorge - (kl === "II" ? ENTLASTUNG_II : 0)));
+    if (kl === "III") return splitting(x, p);
+    if (kl === "V" || kl === "VI") return mst56(x, p);
+    return tarif(x, p);
+  }
+
   // Sozialversicherung Arbeitnehmeranteil (Schätzung) und davon als Vorsorgeaufwand abziehbar
   function svSchaetzung(brutto, p, kinderlos) {
     const rvBasis = Math.min(brutto, p.bbgRV), kvBasis = Math.min(brutto, p.bbgKV);
@@ -63,14 +96,21 @@
   }
 
   function person(pi, p, kinderlos) {
-    const brutto = Math.max(0, num(pi.brutto));
+    const b1 = Math.max(0, num(pi.brutto)), b2 = Math.max(0, num(pi.brutto2));
+    const brutto = b1 + b2;
+    const kl = STKL.includes(pi.stkl) ? pi.stkl : "IV";
     const wk = brutto > 0 ? Math.min(brutto, Math.max(ANP, num(pi.wk))) : 0;
     const s = svSchaetzung(brutto, p, kinderlos);
     const svGeschaetzt = leer(pi.sv);
     const svGes = svGeschaetzt ? s.gesamt : Math.max(0, num(pi.sv));
     const svAbz = s.gesamt > 0 ? svGes * (s.abziehbar / s.gesamt) : 0;
-    return { name: pi.name, brutto, wk, wkPauschal: wk === Math.min(brutto, ANP), einkuenfte: brutto - wk,
-             svGes, svAbz, svGeschaetzt, lst: Math.max(0, num(pi.lst)) };
+    const vors1 = svSchaetzung(b1, p, kinderlos).abziehbar, vors2 = svSchaetzung(b2, p, kinderlos).abziehbar;
+    const lst1Geschaetzt = leer(pi.lst) && b1 > 0;
+    const lst1 = leer(pi.lst) ? lohnsteuer(b1, kl, p, vors1) : Math.max(0, num(pi.lst));
+    const lst2Geschaetzt = leer(pi.lst2) && b2 > 0;
+    const lst2 = b2 <= 0 ? 0 : (leer(pi.lst2) ? lohnsteuer(b2, "VI", p, vors2) : Math.max(0, num(pi.lst2)));
+    return { name: pi.name, kl, b1, b2, brutto, wk, wkPauschal: wk === Math.min(brutto, ANP), einkuenfte: brutto - wk,
+             svGes, svAbz, svGeschaetzt, vors1, lst1, lst2, lst: lst1 + lst2, lstGeschaetzt: lst1Geschaetzt || lst2Geschaetzt };
   }
 
   // Festsetzung inkl. Günstigerprüfung Kindergeld/Kinderfreibetrag, § 35-Anrechnung, Soli, KiSt
@@ -102,8 +142,9 @@
     const { p, basisJahr, exakt } = paramFor(i.jahr);
     const kinder = Math.max(0, Math.floor(num(i.kinder)));
     const kinderlos = kinder === 0;
-    const p1 = person({ name: i.p1_name, brutto: i.p1_brutto, wk: i.p1_wk, sv: i.p1_sv, lst: i.p1_lst }, p, kinderlos);
-    const p2 = person({ name: i.p2_name, brutto: i.p2_brutto, wk: i.p2_wk, sv: i.p2_sv, lst: i.p2_lst }, p, kinderlos);
+    const pp = n => person({ name: i[`p${n}_name`], stkl: i[`p${n}_stkl`], brutto: i[`p${n}_brutto`], wk: i[`p${n}_wk`], sv: i[`p${n}_sv`],
+      lst: i[`p${n}_lst`], brutto2: i[`p${n}_brutto2`], lst2: i[`p${n}_lst2`] }, p, kinderlos);
+    const p1 = pp(1), p2 = pp(2);
     const inhaber = i.inhaber === "2" ? 2 : 1;
 
     const einnahmen = r2((i.quelle === "manuell" ? 0 : num(einnahmenAuto)) + num(i.einnahmenManuell));
@@ -126,17 +167,26 @@
     const zvEOhne = Math.max(0, Math.floor(p1.einkuenfte + p2.einkuenfte - vorsorge - 2 * SAP - weitere));
     const ohneU = festsetzung({ zvE: zvEOhne, kfb: kinder * p.kfb, kgJahr, tarifFn: x => splitting(x, p),
       messbetrag: 0, gewst: 0, soliFG: 2 * p.soliFG, kistSatz, kistFaktor });
-    const steuerUnternehmen = r2(zus.summe + gw.gewst - ohneU.summe);
+    const estUnternehmen = r2(zus.summe - ohneU.summe);
+    const steuerUnternehmen = r2(estUnternehmen + gw.gewst);
 
     // Zum Vergleich: Einzelveranlagung beider Partner
-    const einzeln = [p1, p2].map((pp, idx) => {
+    const einzeln = [p1, p2].map((pr, idx) => {
       const g = inhaber === idx + 1 ? gewinn : 0;
       const gwi = inhaber === idx + 1 ? gw : { messbetrag: 0, gewst: 0 };
-      const z = Math.max(0, Math.floor(pp.einkuenfte + g - pp.svAbz - SAP - weitere / 2));
+      const z = Math.max(0, Math.floor(pr.einkuenfte + g - pr.svAbz - SAP - weitere / 2));
       return festsetzung({ zvE: z, kfb: kinder * p.kfb / 2, kgJahr: kgJahr / 2, tarifFn: x => tarif(x, p),
         messbetrag: gwi.messbetrag, gewst: gwi.gewst, soliFG: p.soliFG, kistSatz, kistFaktor });
     });
     const summeEinzeln = r2(einzeln[0].summe + einzeln[1].summe);
+
+    // Steuerklassen-Vergleich (Hauptarbeitsverhältnis; Nebenjob bleibt Klasse VI)
+    const kombis = [["IV", "IV"], ["III", "V"], ["V", "III"]].map(([a, b]) => {
+      const l = lohnsteuer(p1.b1, a, p, p1.vors1) + p1.lst2 + lohnsteuer(p2.b1, b, p, p2.vors1) + p2.lst2;
+      return { kl: a + "/" + b, lst: l, aktuell: p1.kl === a && p2.kl === b };
+    });
+    const lstIV = lohnsteuer(p1.b1, "IV", p, p1.vors1) + lohnsteuer(p2.b1, "IV", p, p2.vors1);
+    const faktor = lstIV > 0 ? Math.min(0.999, Math.floor(ohneU.tariflich / lstIV * 1000) / 1000) : 0;
 
     const gezahlt = r2(p1.lst + p2.lst + Math.max(0, num(i.vorauszahlungen)));
     const ergebnis = r2(zus.summe - gezahlt);         // > 0 Nachzahlung, < 0 Erstattung
@@ -146,21 +196,35 @@
     const durchschnitt = gde > 0 ? zus.summe / gde : 0;
 
     return { p, basisJahr, exakt, kinder, kgJahr, p1, p2, inhaber, einnahmen, ausgaben, gewinn, gw, gde, vorsorge,
-             zvE, zus, ohneU, steuerUnternehmen, einzeln, summeEinzeln, splittingVorteil: r2(summeEinzeln - zus.summe),
-             gezahlt, ergebnis, bruttoGesamt, netto, grenz, durchschnitt, weitere, kistFaktor, kistSatz };
+             zvE, zus, ohneU, estUnternehmen, steuerUnternehmen, einzeln, summeEinzeln, splittingVorteil: r2(summeEinzeln - zus.summe),
+             kombis, faktor, gezahlt, ergebnis, bruttoGesamt, netto, grenz, durchschnitt, weitere, kistFaktor, kistSatz };
+  }
+
+  // Berechnung mit einem anderen Gewinn (für Grafik und Schwellen)
+  const mitGewinn = (i, g) => berechne(Object.assign({}, i, { quelle: "manuell", einnahmenManuell: g + Math.max(0, num(i.ausgaben)) }), 0);
+
+  // Kleinster Gewinn, ab dem test(r) zutrifft (monoton steigend), sonst null
+  function abGewinn(i, test, max = 400000) {
+    if (!test(mitGewinn(i, max))) return null;
+    let lo = 0, hi = max;
+    if (test(mitGewinn(i, 0))) return 0;
+    while (hi - lo > 50) { const mid = Math.floor((lo + hi) / 2); if (test(mitGewinn(i, mid))) hi = mid; else lo = mid; }
+    return Math.ceil(hi / 100) * 100;
   }
 
   // ---------- Oberfläche ----------
   const DEFAULT = {
     kinder: 1, kist: "keine", kistSatz: 9,
-    p1_name: "Mohammed", p1_brutto: "", p1_wk: "", p1_sv: "", p1_lst: "",
-    p2_name: "Ehefrau", p2_brutto: "", p2_wk: "", p2_sv: "", p2_lst: "",
+    p1_name: "Mohammed", p1_stkl: "IV", p1_brutto: "", p1_wk: "", p1_sv: "", p1_lst: "", p1_brutto2: "", p1_lst2: "",
+    p2_name: "Ehefrau", p2_stkl: "IV", p2_brutto: "", p2_wk: "", p2_sv: "", p2_lst: "", p2_brutto2: "", p2_lst2: "",
     inhaber: "1", quelle: "ef", einnahmenManuell: "", ausgaben: "", hebesatz: 500,
     vorauszahlungen: "", weitereAbzuege: ""
   };
   const LOCAL_KEY = "ef_finanzen_lokal";
-  let STORE = null, LOADED = false, LOAD_ERR = null, CUR = null, DIRTY = false, API = null;
+  const FARBE = { netto: "#0F766E", sv: "#64748B", est: "#D97706", gewst: "#7C3AED", grenze: "#DC2626", hilf: "#94A3B8" };
+  let STORE = null, LOADED = false, LOAD_ERR = null, CUR = null, API = null;
 
+  const $ = s => document.querySelector(s);
   const lokalLesen = () => { try { return JSON.parse(window.localStorage.getItem(LOCAL_KEY) || "null"); } catch (_) { return null; } };
   const lokalSchreiben = s => { try { window.localStorage.setItem(LOCAL_KEY, JSON.stringify(s)); return true; } catch (_) { return false; } };
 
@@ -177,13 +241,16 @@
   }
 
   function einnahmenAusApp(api, quelle, jahr) {
-    if (!quelle || quelle === "manuell") return { summe: 0, anzahl: 0 };
+    const monate = new Array(12).fill(0);
+    if (!quelle || quelle === "manuell") return { summe: 0, anzahl: 0, monate };
     const liste = api.S.belege.filter(b => b.Firma === quelle && b.Typ === "Rechnung" && b.Status === "Bezahlt" &&
       String(b.BezahltAm || "").startsWith(String(jahr)));
-    return { summe: r2(liste.reduce((a, b) => a + api.P.totals(b).netto, 0)), anzahl: liste.length };
+    liste.forEach(b => { const m = Number(String(b.BezahltAm).slice(5, 7)) - 1; if (m >= 0 && m < 12) monate[m] += api.P.totals(b).netto; });
+    return { summe: r2(liste.reduce((a, b) => a + api.P.totals(b).netto, 0)), anzahl: liste.length, monate: monate.map(r2) };
   }
 
   const pct = n => (Math.round(n * 1000) / 10).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " %";
+  const kEur = v => Math.abs(v) >= 1000 ? (v / 1000).toLocaleString("de-DE", { maximumFractionDigits: 1 }) + " T€" : Math.round(v) + " €";
 
   function feld(k, label, opts = {}) {
     const v = CUR[k] ?? "";
@@ -213,6 +280,7 @@
     Object.keys(STORE.jahre).forEach(y => { if (!jahre.includes(y)) jahre.push(y); });
     jahre.sort();
     const firmen = api.S.firmen.map(f => [f.key, "Bezahlte Rechnungen „" + f.d.Firma + "“"]);
+    const stklOpts = STKL.map(k => [k, "Klasse " + k]);
 
     api.view(`
       <div class="head"><h1>Finanzen <span class="muted">· privat</span></h1><span class="grow"></span>
@@ -231,13 +299,17 @@
       </div></div>
 
       <div class="grid fi2">
-        ${[1, 2].map(n => `<div class="card"><h3>${n === 1 ? "Person 1" : "Person 2 (Ehepartner)"}</h3><div class="grid">
-          ${feld(`p${n}_name`, "Name", { text: true, wide: true })}
-          ${feld(`p${n}_brutto`, "Bruttoarbeitslohn im Jahr €", { ph: "0" })}
-          ${feld(`p${n}_wk`, "Werbungskosten € (leer = Pauschale 1.230)", { ph: "1230" })}
+        ${[1, 2].map(n => `<div class="card"><div class="row between"><h3>${n === 1 ? "Person 1" : "Person 2 (Ehepartner)"}</h3>
+          <button class="btn ghost small" type="button" data-hoch="${n}">Aus Gehaltsabrechnung hochrechnen</button></div><div class="grid">
+          ${feld(`p${n}_name`, "Name", { text: true })}
+          ${feld(`p${n}_stkl`, "Steuerklasse", { options: stklOpts })}
+          ${feld(`p${n}_brutto`, "Bruttoarbeitslohn im Jahr € (Hauptjob)", { ph: "0" })}
+          ${feld(`p${n}_lst`, "Lohnsteuer + Soli + KiSt im Jahr € (leer = Schätzung)", { ph: "automatisch" })}
           ${feld(`p${n}_sv`, "Sozialversicherung AN-Anteil € (leer = Schätzung)", { ph: "automatisch" })}
-          ${feld(`p${n}_lst`, "Einbehaltene Lohnsteuer + Soli + KiSt €", { ph: "0" })}
-        </div><p class="small muted">Werte stehen auf der Lohnsteuerbescheinigung (Zeile 3, 4–6, 22–27). Minijobs mit Pauschalsteuer hier nicht eintragen.</p></div>`).join("")}
+          ${feld(`p${n}_wk`, "Werbungskosten € (leer = Pauschale 1.230)", { ph: "1230" })}
+          ${feld(`p${n}_brutto2`, "Brutto 2. Arbeitgeber € (z. B. früherer Job)", { ph: "0" })}
+          ${feld(`p${n}_lst2`, "Lohnsteuer 2. Arbeitgeber € (leer = Klasse VI geschätzt)", { ph: "automatisch" })}
+        </div><p class="small muted">Werte stehen auf der Lohnsteuerbescheinigung bzw. in den Jahreswerten der Gehaltsabrechnung. Minijobs mit Pauschalsteuer nicht eintragen.</p></div>`).join("")}
       </div>
 
       <div class="card"><h3>Einzelunternehmen</h3><div class="grid g4">
@@ -257,17 +329,15 @@
       if (!k) return;
       CUR[k] = e.target.value;
       STORE.jahre[jahr] = Object.assign({}, CUR);
-      DIRTY = true;
       $("#fiSave").textContent = "Speichern *";
       renderRes();
     };
     document.querySelectorAll("[data-k]").forEach(el => { el.oninput = onChange; el.onchange = onChange; });
+    document.querySelectorAll("[data-hoch]").forEach(b => { b.onclick = () => hochrechnenDialog(Number(b.dataset.hoch)); });
     $("#fiJahr").onchange = e => { location.hash = "#/finanzen/" + e.target.value; };
     $("#fiSave").onclick = speichern;
     renderRes();
   }
-
-  const $ = s => document.querySelector(s);
 
   function speichern() {
     STORE.jahre[CUR.jahr] = Object.assign({}, CUR);
@@ -276,7 +346,6 @@
       try {
         await API.G.privatSpeichern(STORE);
         LOAD_ERR = null;
-        DIRTY = false;
         $("#fiSave").textContent = "Speichern";
         API.toast("In OneDrive gespeichert (Ein-Facher-Privat/finanzen.json)");
       } catch (e) {
@@ -286,6 +355,194 @@
     });
   }
 
+  // ---------- Hochrechnung aus der monatlichen Gehaltsabrechnung ----------
+  function hochrechnenDialog(n) {
+    const esc = API.esc, mon = Math.max(1, Number(API.today().slice(5, 7)) - 1);
+    const name = CUR[`p${n}_name`] || ("Person " + n);
+    $("#modalBox").innerHTML = `<h2>Hochrechnung – ${esc(name)}</h2>
+      <p class="small muted">Werte aus der letzten Gehaltsabrechnung eintragen. „Jahreswerte“ = Spalte rechts (bisher im Jahr), „Monat“ = Betrag des Abrechnungsmonats.
+        Gerechnet wird: Jahreswert bisher + Monatsbetrag × restliche Monate.</p>
+      <form id="hf" class="grid">
+        <label class="wide">Abrechnungsmonat<select name="m">${["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+          .map((t, i) => `<option value="${i + 1}" ${i + 1 === mon ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+        <label>Steuerbrutto Jahreswert bisher (BSL) €<input name="bj" type="number" step="0.01" required></label>
+        <label>Steuerbrutto Monat €<input name="bm" type="number" step="0.01" required></label>
+        <label>Lohnsteuer Jahreswert bisher (LST) €<input name="lj" type="number" step="0.01"></label>
+        <label>Lohnsteuer Monat €<input name="lm" type="number" step="0.01"></label>
+        <label>SV Jahreswerte bisher (KV + PV + RV + AV) €<input name="sj" type="number" step="0.01"></label>
+        <label>SV Monat (KV + PV + RV + AV) €<input name="sm" type="number" step="0.01"></label>
+        <p class="wide small muted" id="hfVor"></p>
+        <div class="actions wide"><span class="grow"></span><button type="button" class="btn ghost" id="hfC">Abbrechen</button><button class="btn primary">Übernehmen</button></div>
+      </form>`;
+    $("#modal").classList.remove("hidden");
+    const close = () => { $("#modal").classList.add("hidden"); $("#modalBox").innerHTML = ""; };
+    const f = $("#hf");
+    const calc = () => {
+      const m = Number(f.elements.m.value), rest = 12 - m, v = k => Math.abs(num(f.elements[k].value));
+      return { brutto: r2(v("bj") + v("bm") * rest), lst: f.elements.lj.value === "" ? "" : r2(v("lj") + v("lm") * rest),
+               sv: f.elements.sj.value === "" ? "" : r2(v("sj") + v("sm") * rest) };
+    };
+    f.oninput = () => {
+      const c = calc();
+      $("#hfVor").textContent = `Ergebnis: Brutto ${API.eur(c.brutto)}${c.lst !== "" ? " · Lohnsteuer " + API.eur(c.lst) : ""}${c.sv !== "" ? " · SV " + API.eur(c.sv) : ""} im Jahr`;
+    };
+    $("#hfC").onclick = close;
+    f.onsubmit = e => {
+      e.preventDefault();
+      const c = calc();
+      CUR[`p${n}_brutto`] = c.brutto;
+      if (c.lst !== "") CUR[`p${n}_lst`] = c.lst;
+      if (c.sv !== "") CUR[`p${n}_sv`] = c.sv;
+      STORE.jahre[CUR.jahr] = Object.assign({}, CUR);
+      close();
+      render(API, CUR.jahr);
+      $("#fiSave").textContent = "Speichern *";
+      API.toast("Hochrechnung übernommen – bitte speichern");
+    };
+  }
+
+  // ---------- Grafiken (SVG) ----------
+  function svgVerteilung(r) {
+    const teile = [
+      ["Netto (ohne Kindergeld)", Math.max(0, r.netto - r.kgJahr), FARBE.netto],
+      ["Sozialversicherung", r.p1.svGes + r.p2.svGes, FARBE.sv],
+      ["Einkommensteuer + Soli + KiSt", r.zus.summe, FARBE.est],
+      ["Gewerbesteuer", r.gw.gewst, FARBE.gewst]
+    ].filter(t => t[1] > 0);
+    const total = teile.reduce((a, t) => a + t[1], 0);
+    if (!total) return `<p class="empty">Noch keine Einkommen eingetragen.</p>`;
+    let x = 0;
+    const rects = teile.map(([l, v, c]) => {
+      const w = v / total * 600, s = `<rect x="${x}" y="0" width="${Math.max(0, w - 1)}" height="34" rx="4" fill="${c}"><title>${l}: ${API.eur(v)}</title></rect>
+        ${w > 46 ? `<text x="${x + w / 2}" y="22" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">${pct(v / total)}</text>` : ""}`;
+      x += w; return s;
+    }).join("");
+    return `<svg viewBox="0 0 600 34" class="chart" role="img" aria-label="Aufteilung des Bruttoeinkommens">${rects}</svg>
+      <div class="legend">${teile.map(([l, v, c]) => `<span><i style="background:${c}"></i>${l}: <strong>${API.eur(v)}</strong></span>`).join("")}</div>`;
+  }
+
+  function svgGewinnKurve(r) {
+    const i = CUR, akt = Math.max(0, r.gewinn), aus = Math.max(0, num(i.ausgaben));
+    const xMax = Math.min(200000, Math.max(30000, Math.ceil(Math.max(akt * 1.6, KU_VORJAHR - aus + 5000, GEW_FREIBETRAG + 5000) / 5000) * 5000));
+    const N = 40, pts = [];
+    for (let k = 0; k <= N; k++) { const g = xMax * k / N, rr = mitGewinn(i, g); pts.push({ g, steuer: rr.steuerUnternehmen, bleibt: g - rr.steuerUnternehmen }); }
+    const W = 960, H = 280, L = 60, R = 16, T = 30, B = 34, pw = W - L - R, ph = H - T - B;
+    const yMax = Math.max(1000, Math.ceil(Math.max(...pts.map(p => p.bleibt)) / 5000) * 5000);
+    const X = g => L + g / xMax * pw, Y = v => T + ph - v / yMax * ph;
+    const linie = (key, c) => `<polyline fill="none" stroke="${c}" stroke-width="2.5" points="${pts.map(p => X(p.g).toFixed(1) + "," + Y(p[key]).toFixed(1)).join(" ")}"/>`;
+    let grid = "";
+    for (let k = 0; k <= 4; k++) {
+      const v = yMax * k / 4, y = Y(v);
+      grid += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="#E5E7EB"/><text x="${L - 6}" y="${y + 4}" text-anchor="end" font-size="11" fill="#6B7780">${kEur(v)}</text>`;
+      const gx = xMax * k / 4;
+      grid += `<text x="${X(gx)}" y="${H - 12}" text-anchor="middle" font-size="11" fill="#6B7780">${kEur(gx)}</text>`;
+    }
+    const vline = (g, txt, c, ty, anchor) => g > 0 && g < xMax ? `<line x1="${X(g)}" x2="${X(g)}" y1="${T - 4}" y2="${T + ph}" stroke="${c}" stroke-dasharray="4 4"/>
+      <text x="${X(g) + (anchor === "end" ? -5 : 5)}" y="${ty}" text-anchor="${anchor}" font-size="11" fill="${c}">${txt}</text>` : "";
+    const kuG = KU_VORJAHR - aus, links = kuG < GEW_FREIBETRAG;
+    const rAkt = mitGewinn(i, akt);
+    const punkt = `<circle cx="${X(akt)}" cy="${Y(akt - rAkt.steuerUnternehmen)}" r="5" fill="${FARBE.netto}" stroke="#fff" stroke-width="2"><title>Dein Stand: Gewinn ${API.eur(akt)}</title></circle>`;
+    return `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Was vom Gewinn bleibt">
+      ${grid}${vline(kuG, "Umsatz 25.000 €", FARBE.grenze, T - 14, links ? "end" : "start")}${vline(GEW_FREIBETRAG, "Gewerbesteuer-Freibetrag", FARBE.gewst, T - 14, links ? "start" : "end")}
+      ${linie("bleibt", FARBE.netto)}${linie("steuer", FARBE.est)}${punkt}
+      <text x="${W - R}" y="${H - 1}" text-anchor="end" font-size="10.5" fill="#6B7780">Gewinn im Jahr →</text></svg>
+      <div class="legend"><span><i style="background:${FARBE.netto}"></i>Bleibt dir nach Steuern</span><span><i style="background:${FARBE.est}"></i>Steuer auf den Gewinn</span>
+        <span><i class="ring"></i>Dein Stand</span></div>`;
+  }
+
+  function svgMonate(monate, vorjahr) {
+    const W = 600, H = 220, L = 50, R = 54, T = 14, B = 28, pw = W - L - R, ph = H - T - B;
+    const kum = []; monate.reduce((a, v, k) => (kum[k] = a + v), 0);
+    const mMax = Math.max(500, ...monate) * 1.15, kMax = Math.max(KU_VORJAHR * 1.1, kum[11] * 1.05);
+    const bw = pw / 12;
+    const Yl = v => T + ph - v / mMax * ph, Yr = v => T + ph - v / kMax * ph;
+    const bars = monate.map((v, k) => `<rect x="${L + k * bw + 4}" y="${Yl(v)}" width="${bw - 8}" height="${T + ph - Yl(v)}" rx="3" fill="${FARBE.netto}" opacity=".85"><title>${API.eur(v)}</title></rect>
+      <text x="${L + k * bw + bw / 2}" y="${H - 10}" text-anchor="middle" font-size="10.5" fill="#6B7780">${"JFMAMJJASOND"[k]}</text>`).join("");
+    const linie = `<polyline fill="none" stroke="${FARBE.est}" stroke-width="2.5" points="${kum.map((v, k) => (L + k * bw + bw / 2).toFixed(1) + "," + Yr(v).toFixed(1)).join(" ")}"/>`;
+    const g = Yr(KU_VORJAHR);
+    return `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Umsatz pro Monat">
+      <line x1="${L}" x2="${W - R}" y1="${T + ph}" y2="${T + ph}" stroke="#E5E7EB"/>
+      <text x="${L - 6}" y="${T + 10}" text-anchor="end" font-size="10.5" fill="#6B7780">${kEur(mMax)}</text>
+      ${bars}<line x1="${L}" x2="${W - R}" y1="${g}" y2="${g}" stroke="${FARBE.grenze}" stroke-dasharray="5 4"/>
+      <text x="${W - R + 6}" y="${g + 4}" font-size="10.5" fill="${FARBE.grenze}">25 T€</text>${linie}</svg>
+      <div class="legend"><span><i style="background:${FARBE.netto}"></i>Umsatz im Monat (linke Skala)</span><span><i style="background:${FARBE.est}"></i>Summe seit Januar (rechte Skala)</span>
+        <span><i style="background:${FARBE.grenze}"></i>Kleinunternehmergrenze</span>${vorjahr != null ? `<span>Vorjahr gesamt: <strong>${API.eur(vorjahr)}</strong></span>` : ""}</div>`;
+  }
+
+  // ---------- Empfehlungen ----------
+  function empfehlungen(r, auto, vorjahrUmsatz) {
+    const eur = API.eur, out = [], add = (lvl, titel, text) => out.push({ lvl, titel, text });
+    const i = CUR, jahr = Number(i.jahr), heute = API.today(), istAktuell = String(jahr) === heute.slice(0, 4);
+    const monat = istAktuell ? Number(heute.slice(5, 7)) : 12;
+    const firma = (API.S.firmen.find(f => f.key === i.quelle) || {}).d;
+    const istKU = !firma || firma.Steuer !== "Regelbesteuert (mit USt)";
+    const U = r.einnahmen;
+
+    // 1. Kleinunternehmergrenze
+    if (istKU) {
+      const rest = KU_VORJAHR - U;
+      const prognose = istAktuell && monat > 0 ? U / monat * 12 : U;
+      if (U > KU_LAUFEND) add("crit", "Über 100.000 € Umsatz", "Die Kleinunternehmerregelung entfällt sofort ab dem Umsatz, mit dem die Grenze überschritten wird. Ab dann Rechnungen mit Umsatzsteuer stellen – bitte Steuerberater einbeziehen.");
+      else if (rest < 0) add("warn", `Kleinunternehmergrenze überschritten (+${eur(-rest)})`,
+        `Mit ${eur(U)} Umsatz in ${jahr} bist du ab ${jahr + 1} regelbesteuert: Rechnungen mit 19 % USt, monatliche/vierteljährliche Umsatzsteuer-Voranmeldung. Plane Preise so, dass die 19 % nicht von deiner Marge abgehen.`);
+      else {
+        let txt = `Du kannst in ${jahr} noch <strong>${eur(rest)}</strong> Umsatz machen und bleibst ${jahr + 1} Kleinunternehmer (ohne Umsatzsteuer).`;
+        if (istAktuell && prognose > KU_VORJAHR && U > 0) {
+          const mon = Math.ceil(KU_VORJAHR / (U / monat));
+          txt += ` Beim aktuellen Tempo (${eur(U / monat)} pro Monat) wäre die Grenze etwa im ${["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"][Math.min(11, mon - 1)]} erreicht.`;
+        }
+        txt += " Es zählt das Geld, das im Jahr tatsächlich eingeht: Eine Zahlung, die erst im Januar ankommt, zählt zum neuen Jahr – Rechnungen aber immer mit dem echten Datum ausstellen.";
+        add(rest < 3000 ? "warn" : "ok", rest < 3000 ? "Kleinunternehmergrenze fast erreicht" : "Kleinunternehmergrenze", txt);
+      }
+      if (vorjahrUmsatz != null && vorjahrUmsatz > KU_VORJAHR) add("warn", `Vorjahr über 25.000 € (${eur(vorjahrUmsatz)})`, `Damit bist du in ${jahr} nicht mehr Kleinunternehmer – Rechnungen müssen Umsatzsteuer ausweisen.`);
+    }
+
+    // 2. Gewerbesteuer
+    if (r.gewinn > 0) {
+      if (r.gewinn <= GEW_FREIBETRAG) add("ok", "Keine Gewerbesteuer", `Bis ${eur(GEW_FREIBETRAG)} Gewinn fällt keine Gewerbesteuer an – du hast noch <strong>${eur(GEW_FREIBETRAG - r.gewinn)}</strong> Luft.`);
+      else add("info", "Gewerbesteuer fällig", `${eur(r.gw.gewst)} Gewerbesteuer an die Stadt. Davon werden ${eur(r.zus.anr)} auf die Einkommensteuer angerechnet – bei Hebesatz ${num(i.hebesatz)} % kostet sie dich effektiv nur ${eur(Math.max(0, r.gw.gewst - r.zus.anr))}.`);
+    }
+
+    // 3. Grenzsteuersatz – was bleibt vom nächsten Euro
+    if (r.zvE > 0) {
+      const bleibt = Math.round(100 * (1 - r.grenz * (1 + (r.zus.soli > 0 ? 0.055 : 0) + r.kistSatz / 100 * r.kistFaktor)));
+      const spitze = abGewinn(i, x => x.grenz >= 0.42);
+      add("info", `Von jedem weiteren 100 € Gewinn bleiben ca. ${bleibt} €`,
+        `Dein Grenzsteuersatz liegt bei ${pct(r.grenz)}.${spitze != null && spitze > r.gewinn ? ` Den Spitzensteuersatz von 42 % erreicht ihr erst ab ca. ${eur(spitze)} Gewinn.` : ""} Mehr arbeiten lohnt sich also immer – es gibt keine Stufe, ab der weniger übrig bleibt.`);
+    }
+
+    // 4. Soli
+    const soliAb = abGewinn(i, x => x.zus.soli > 0);
+    if (r.zus.soli === 0 && soliAb != null && soliAb > r.gewinn) add("ok", "Kein Solidaritätszuschlag", `Der Soli fällt bei euch erst ab ca. ${eur(soliAb)} Gewinn an (Freigrenze ${eur(2 * r.p.soliFG)} Einkommensteuer).`);
+
+    // 5. Rücklage + Vorauszahlungen
+    if (r.steuerUnternehmen > 0) {
+      add("info", `Rücklage: ${eur(r.steuerUnternehmen / 12)} pro Monat`,
+        `Das Unternehmen erhöht eure Steuer um ca. ${eur(r.steuerUnternehmen)} (${pct(r.gewinn > 0 ? r.steuerUnternehmen / r.gewinn : 0)} vom Gewinn). Lege diesen Anteil von jeder Zahlung auf ein Tagesgeldkonto.`);
+      if (r.estUnternehmen >= VORAUSZAHLUNG_AB) add("warn", "Vorauszahlungen wahrscheinlich",
+        `Ab ${eur(VORAUSZAHLUNG_AB)} Einkommensteuer im Jahr auf Nebeneinkünfte setzt das Finanzamt nach der ersten Erklärung meist vierteljährliche Vorauszahlungen fest (10.03., 10.06., 10.09., 10.12.). Rechne mit ca. ${eur(r.estUnternehmen / 4)} pro Quartal.`);
+    }
+
+    // 6. Erstattung / Nachzahlung
+    if (r.ergebnis > 1000) add("warn", `Nachzahlung von ca. ${eur(r.ergebnis)} erwartet`, "Rücklage bilden. Alternativ kann ein Steuerklassenwechsel oder das Faktorverfahren die monatliche Lohnsteuer besser anpassen (siehe Vergleich unten).");
+    else if (r.ergebnis < -300) add("ok", `Erstattung von ca. ${eur(-r.ergebnis)} erwartet`, "Die Steuererklärung lohnt sich für euch.");
+
+    // 7. Betriebsausgaben vor Jahresende
+    if (istAktuell && monat >= 10 && r.gewinn > 0) add("info", "Anschaffungen vor dem 31.12.",
+      `Was du für das Unternehmen sowieso brauchst (z. B. Laptop, Software, Fachbücher), mindert den Gewinn noch in ${jahr}. Geräte bis 800 € netto kannst du sofort voll absetzen. Ersparnis ca. ${pct(r.grenz)} des Betrags – kaufe aber nichts nur wegen der Steuer.`);
+
+    // 8. Pflicht zur Steuererklärung
+    if (r.gewinn > PFLICHT_NEBENEINK || r.p1.kl === "III" || r.p1.kl === "V" || r.p2.kl === "III" || r.p2.kl === "V" || r.p1.b2 > 0 || r.p2.b2 > 0) {
+      const gruende = [];
+      if (r.gewinn > PFLICHT_NEBENEINK) gruende.push(`Gewinn über ${PFLICHT_NEBENEINK} €`);
+      if ([r.p1.kl, r.p2.kl].some(k => k === "III" || k === "V")) gruende.push("Steuerklasse III/V");
+      if (r.p1.b2 > 0 || r.p2.b2 > 0) gruende.push("mehrere Arbeitgeber");
+      add("info", "Steuererklärung ist Pflicht", `Grund: ${gruende.join(", ")}. Abgabe für ${jahr} bis 31.07.${jahr + 1} (mit Steuerberater/Lohnsteuerhilfeverein später).`);
+    }
+    return out;
+  }
+
+  // ---------- Ergebnisse ----------
   function renderRes() {
     const api = API, eur = api.eur, esc = api.esc;
     const auto = einnahmenAusApp(api, CUR.quelle, CUR.jahr);
@@ -294,24 +551,70 @@
       `${auto.anzahl} bezahlte Rechnung(en) mit Zahlungsdatum in ${CUR.jahr} (Netto, nach Zuflussprinzip).`;
     const r = berechne(CUR, auto.summe);
     const z = r.zus;
+    const vj = String(Number(CUR.jahr) - 1);
+    const vorjahrUmsatz = CUR.quelle === "manuell" && !STORE.jahre[vj] ? null
+      : r2(einnahmenAusApp(api, CUR.quelle, vj).summe + num((STORE.jahre[vj] || {}).einnahmenManuell));
     const vz = r.ergebnis > 0 ? "Nachzahlung" : "Erstattung";
     const zeile = (l, v, cls = "", hint = "") => `<tr class="${cls}"><td>${l}${hint ? `<div class="small muted">${hint}</div>` : ""}</td><td class="r">${v}</td></tr>`;
     const n1 = esc(r.p1.name || "Person 1"), n2 = esc(r.p2.name || "Person 2");
+    const tipps = empfehlungen(r, auto, vorjahrUmsatz);
+    const ICON = { ok: "✓", warn: "!", crit: "!", info: "i" };
+    const aktKombi = r.kombis.find(k => k.aktuell);
 
     $("#fiRes").innerHTML = `
       ${r.exakt ? "" : `<div class="card warnbox">Für ${esc(CUR.jahr)} sind noch keine Steuerwerte hinterlegt – gerechnet wird mit den Werten von ${r.basisJahr}.</div>`}
       <div class="kpis">
         <div class="kpi"><div class="l">Brutto Haushalt</div><div class="v">${eur(r.bruttoGesamt)}</div><div class="s">Löhne + Gewinn</div></div>
         <div class="kpi"><div class="l">Steuern gesamt</div><div class="v">${eur(z.summe + r.gw.gewst)}</div><div class="s">ESt + Soli + KiSt + GewSt</div></div>
-        <div class="kpi ${r.ergebnis > 0 ? "warn" : "ok"}"><div class="l">Voraussichtl. ${vz}</div><div class="v">${eur(Math.abs(r.ergebnis))}</div><div class="s">${r.gezahlt ? "nach bereits gezahlten " + eur(r.gezahlt) : "Lohnsteuer noch nicht eingetragen"}</div></div>
-        <div class="kpi"><div class="l">Netto Haushalt</div><div class="v">${eur(r.netto)}</div><div class="s">${eur(r.netto / 12)} pro Monat</div></div>
+        <div class="kpi ${r.ergebnis > 0 ? "warn" : "ok"}"><div class="l">Voraussichtl. ${vz}</div><div class="v">${eur(Math.abs(r.ergebnis))}</div><div class="s">${r.p1.lstGeschaetzt || r.p2.lstGeschaetzt ? "Lohnsteuer teilweise geschätzt" : "nach gezahlten " + eur(r.gezahlt)}</div></div>
+        <div class="kpi"><div class="l">Netto Haushalt</div><div class="v">${eur(r.netto)}</div><div class="s">${eur(r.netto / 12)} pro Monat inkl. Kindergeld</div></div>
+      </div>
+
+      <div class="card"><h3>Empfehlungen für ${esc(CUR.jahr)}</h3>
+        <ul class="tipps">${tipps.map(t => `<li class="t-${t.lvl}"><span class="ti">${ICON[t.lvl]}</span><div><strong>${t.titel}</strong><div class="small">${t.text}</div></div></li>`).join("")}</ul>
+      </div>
+
+      <div class="grid fi2">
+        <div class="card"><h3>Wohin geht euer Bruttoeinkommen?</h3>${svgVerteilung(r)}</div>
+        <div class="card"><h3>Umsatz ${esc(CUR.jahr)} nach Monaten</h3>${CUR.quelle === "manuell" ? `<p class="empty">Einnahmen werden nicht aus der App übernommen.</p>` : svgMonate(auto.monate, vorjahrUmsatz)}</div>
+      </div>
+      <div class="card"><h3>Was bleibt vom Gewinn?</h3>
+        <p class="small muted">Steuer und Nettobetrag, wenn der Gewinn des Unternehmens steigt – bei euren Löhnen. Die gestrichelten Linien zeigen die wichtigen Grenzen.</p>${svgGewinnKurve(r)}</div>
+
+      <div class="grid fi2">
+        <div class="card"><h3>Steuerklassen-Vergleich</h3><div class="tblwrap"><table class="tbl fitbl">
+          <thead><tr><th>Klassen</th><th class="r">Lohnsteuer/Jahr</th><th class="r">Netto/Monat</th><th class="r">Erklärung</th></tr></thead><tbody>
+          ${r.kombis.map(k => {
+            const diff = aktKombi ? (aktKombi.lst - k.lst) / 12 : 0;
+            const erg = r2(z.summe - k.lst - Math.max(0, num(CUR.vorauszahlungen)));
+            return `<tr class="${k.aktuell ? "akt" : ""}"><td>${k.kl}${k.aktuell ? ' <span class="badge">jetzt</span>' : ""}</td><td class="r">${eur(k.lst)}</td>
+              <td class="r">${k.aktuell || !aktKombi ? "–" : (diff >= 0 ? "+" : "") + eur(diff)}</td><td class="r ${erg > 0 ? "neg" : "pos"}">${erg > 0 ? "Nachz. " : "Erst. "}${eur(Math.abs(erg))}</td></tr>`;
+          }).join("")}
+        </tbody></table></div>
+        <p class="small muted">Reihenfolge: ${n1} / ${n2}. Die Jahressteuer ist bei jeder Kombination gleich – die Steuerklasse verteilt nur, wie viel monatlich einbehalten wird. Lohnsteuer hier geschätzt.
+          ${r.faktor > 0 ? `Faktorverfahren IV/IV mit Faktor <strong>${r.faktor.toLocaleString("de-DE", { minimumFractionDigits: 3 })}</strong> würde die Lohnsteuer recht genau an die Jahressteuer anpassen (Antrag beim Finanzamt).` : ""}</p></div>
+
+        <div class="card"><h3>Grenzen im Überblick</h3><div class="tblwrap"><table class="tbl fitbl"><thead><tr><th>Grenze</th><th class="r">Dein Stand</th><th class="r">Noch Platz</th></tr></thead><tbody>
+          ${(() => {
+            const soliAb = abGewinn(CUR, x => x.zus.soli > 0), spitze = abGewinn(CUR, x => x.grenz >= 0.42);
+            const vor = abGewinn(CUR, x => x.estUnternehmen >= VORAUSZAHLUNG_AB);
+            const row = (l, stand, grenze, einheit) => `<tr><td>${l}<div class="small muted">ab ${grenze == null ? "–" : eur(grenze)} ${einheit}</div></td><td class="r">${eur(stand)}</td>
+              <td class="r ${grenze != null && stand > grenze ? "neg" : "pos"}">${grenze == null ? "–" : stand > grenze ? "überschritten" : eur(grenze - stand)}</td></tr>`;
+            return row("Kleinunternehmer im nächsten Jahr", r.einnahmen, KU_VORJAHR, "Umsatz") +
+              row("Kleinunternehmer sofort weg", r.einnahmen, KU_LAUFEND, "Umsatz") +
+              row("Gewerbesteuer", r.gewinn, GEW_FREIBETRAG, "Gewinn") +
+              row("Vorauszahlungen Finanzamt", r.gewinn, vor, "Gewinn") +
+              row("Solidaritätszuschlag", r.gewinn, soliAb, "Gewinn") +
+              row("Spitzensteuersatz 42 %", r.gewinn, spitze, "Gewinn");
+          })()}
+        </tbody></table></div></div>
       </div>
 
       <div class="grid fi2">
         <div class="card"><h3>Berechnung ${esc(CUR.jahr)} – Zusammenveranlagung</h3><div class="tblwrap"><table class="tbl fitbl"><tbody>
-          ${zeile(`Bruttolohn ${n1}`, eur(r.p1.brutto))}
+          ${zeile(`Bruttolohn ${n1}`, eur(r.p1.brutto), "", r.p1.b2 ? `davon 2. Arbeitgeber ${eur(r.p1.b2)}` : "")}
           ${zeile(`− Werbungskosten ${n1}`, eur(r.p1.wk), "", r.p1.wkPauschal ? "Pauschale" : "")}
-          ${zeile(`Bruttolohn ${n2}`, eur(r.p2.brutto))}
+          ${zeile(`Bruttolohn ${n2}`, eur(r.p2.brutto), "", r.p2.b2 ? `davon 2. Arbeitgeber ${eur(r.p2.b2)}` : "")}
           ${zeile(`− Werbungskosten ${n2}`, eur(r.p2.wk), "", r.p2.wkPauschal ? "Pauschale" : "")}
           ${zeile("+ Gewinn Einzelunternehmen", eur(r.gewinn), "", `Einnahmen ${eur(r.einnahmen)} − Ausgaben ${eur(r.ausgaben)}`)}
           ${zeile("= Gesamtbetrag der Einkünfte", eur(r.gde), "sum")}
@@ -326,7 +629,9 @@
           ${zeile("+ Solidaritätszuschlag", eur(z.soli), "", z.soli ? "" : `Freigrenze ${eur(2 * r.p.soliFG)} nicht überschritten`)}
           ${r.kistFaktor ? zeile(`+ Kirchensteuer (${esc(r.kistSatz)} %)`, eur(z.kist)) : ""}
           ${zeile("= Steuer Finanzamt", eur(z.summe), "sum")}
-          ${zeile("− Bereits gezahlt (Lohnsteuer, Vorauszahlungen)", eur(r.gezahlt))}
+          ${zeile(`− Lohnsteuer ${n1}`, eur(r.p1.lst), "", r.p1.lstGeschaetzt ? `geschätzt (Klasse ${r.p1.kl}${r.p1.b2 ? " + VI" : ""})` : "")}
+          ${zeile(`− Lohnsteuer ${n2}`, eur(r.p2.lst), "", r.p2.lstGeschaetzt ? `geschätzt (Klasse ${r.p2.kl}${r.p2.b2 ? " + VI" : ""})` : "")}
+          ${num(CUR.vorauszahlungen) ? zeile("− Vorauszahlungen", eur(num(CUR.vorauszahlungen))) : ""}
           ${zeile(`= Voraussichtliche ${vz}`, eur(Math.abs(r.ergebnis)), "sum " + (r.ergebnis > 0 ? "neg" : "pos"))}
         </tbody></table></div></div>
 
@@ -336,7 +641,6 @@
             ${zeile("Gewerbesteuer", eur(r.gw.gewst), "", r.gw.gewst ? `Messbetrag ${eur(r.gw.messbetrag)} × ${esc(CUR.hebesatz)} %` : `Freibetrag ${eur(GEW_FREIBETRAG)} nicht überschritten`)}
             ${zeile("Mehrsteuer durch das Unternehmen", eur(r.steuerUnternehmen), "sum", r.gewinn > 0 ? `${pct(r.steuerUnternehmen / r.gewinn)} vom Gewinn` : "")}
             ${zeile("Empfohlene Rücklage pro Monat", eur(Math.max(0, r.steuerUnternehmen) / 12), "", "für Steuernachzahlung zurücklegen")}
-            ${zeile("Umsatz für Kleinunternehmergrenze", eur(r.einnahmen), "", r.einnahmen > 25000 ? "über 25.000 € – Kleinunternehmerregelung entfällt im Folgejahr" : "unter 25.000 €")}
           </tbody></table></div></div>
 
           <div class="card"><h3>Kennzahlen</h3><div class="tblwrap"><table class="tbl fitbl"><tbody>
@@ -350,9 +654,9 @@
         </div>
       </div>
       <p class="small muted">Vereinfachte Schätzung nach § 32a EStG (${r.basisJahr}): Grundfreibetrag ${eur(r.p.gfb)}, Kinderfreibetrag ${eur(r.p.kfb)} je Kind, Soli-Freigrenze ${eur(2 * r.p.soliFG)} (zusammen).
-        Nicht berücksichtigt u. a.: Riester, Unterhalt, Handwerkerleistungen, Progressionsvorbehalt (Elterngeld, Krankengeld, ALG), genaue Höchstbeträge der Vorsorgeaufwendungen.
-        Als Einzelunternehmer mit Gewinn über 410 € seid ihr zur Abgabe der Steuererklärung verpflichtet. Für verbindliche Zahlen: Steuerberater oder Lohnsteuerhilfeverein.</p>`;
+        Lohnsteuer-Schätzung vereinfacht nach Programmablaufplan (Vorsorgepauschale geschätzt). Nicht berücksichtigt u. a.: Riester, Unterhalt, Handwerkerleistungen,
+        Progressionsvorbehalt (Elterngeld, Krankengeld, ALG), genaue Höchstbeträge der Vorsorgeaufwendungen. Für verbindliche Zahlen: Steuerberater oder Lohnsteuerhilfeverein.</p>`;
   }
 
-  root.EFFinanzen = { render, berechne, tarif, splitting, soli, PARAM };
+  root.EFFinanzen = { render, berechne, tarif, splitting, soli, lohnsteuer, abGewinn, PARAM };
 })(typeof window !== "undefined" ? window : globalThis);
