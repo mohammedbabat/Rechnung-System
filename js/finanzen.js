@@ -300,7 +300,7 @@
 
       <div class="grid fi2">
         ${[1, 2].map(n => `<div class="card"><div class="row between"><h3>${n === 1 ? "Person 1" : "Person 2 (Ehepartner)"}</h3>
-          <button class="btn ghost small" type="button" data-hoch="${n}">Aus Gehaltsabrechnung hochrechnen</button></div><div class="grid">
+          <button class="btn ghost small" type="button" data-hoch="${n}">📄 Gehaltsabrechnung hochladen</button></div><div class="grid">
           ${feld(`p${n}_name`, "Name", { text: true })}
           ${feld(`p${n}_stkl`, "Steuerklasse", { options: stklOpts })}
           ${feld(`p${n}_brutto`, "Bruttoarbeitslohn im Jahr € (Hauptjob)", { ph: "0" })}
@@ -355,23 +355,31 @@
     });
   }
 
-  // ---------- Hochrechnung aus der monatlichen Gehaltsabrechnung ----------
-  function hochrechnenDialog(n) {
-    const esc = API.esc, mon = Math.max(1, Number(API.today().slice(5, 7)) - 1);
+  // ---------- Gehaltsabrechnung hochladen / Hochrechnung aufs Jahr ----------
+  const MONATSNAMEN = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+
+  function hochrechnenDialog(n, datei) {
+    const esc = API.esc, eur = API.eur, mon = Math.max(1, Number(API.today().slice(5, 7)) - 1);
     const name = CUR[`p${n}_name`] || ("Person " + n);
-    $("#modalBox").innerHTML = `<h2>Hochrechnung – ${esc(name)}</h2>
-      <p class="small muted">Werte aus der letzten Gehaltsabrechnung eintragen. „Jahreswerte“ = Spalte rechts (bisher im Jahr), „Monat“ = Betrag des Abrechnungsmonats.
+    let erkannt = {};   // Steuerklasse, Kinder, Kirchensteuer aus dem PDF
+    $("#modalBox").innerHTML = `<h2>Gehaltsabrechnung – ${esc(name)}</h2>
+      <div class="dropzone" id="hfDrop">
+        <div><strong>PDF hier hineinziehen</strong> oder <label class="link">Datei auswählen<input type="file" id="hfFile" accept="application/pdf,.pdf" hidden></label></div>
+        <div class="small muted">Monatsabrechnung oder Lohnsteuerbescheinigung. Die Datei wird nur in deinem Browser gelesen – sie wird nicht hochgeladen oder gespeichert.</div>
+      </div>
+      <div id="hfInfo"></div>
+      <p class="small muted">Oder Werte von Hand eintragen: „Jahreswert“ = Spalte rechts (bisher im Jahr), „Monat“ = Betrag des Abrechnungsmonats.
         Gerechnet wird: Jahreswert bisher + Monatsbetrag × restliche Monate.</p>
       <form id="hf" class="grid">
-        <label class="wide">Abrechnungsmonat<select name="m">${["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+        <label class="wide">Abrechnungsmonat<select name="m">${MONATSNAMEN
           .map((t, i) => `<option value="${i + 1}" ${i + 1 === mon ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-        <label>Steuerbrutto Jahreswert bisher (BSL) €<input name="bj" type="number" step="0.01" required></label>
+        <label>Steuerbrutto Jahreswert bisher €<input name="bj" type="number" step="0.01" required></label>
         <label>Steuerbrutto Monat €<input name="bm" type="number" step="0.01" required></label>
-        <label>Lohnsteuer Jahreswert bisher (LST) €<input name="lj" type="number" step="0.01"></label>
-        <label>Lohnsteuer Monat €<input name="lm" type="number" step="0.01"></label>
+        <label>Lohnsteuer (+ Soli + KiSt) Jahreswert bisher €<input name="lj" type="number" step="0.01"></label>
+        <label>Lohnsteuer (+ Soli + KiSt) Monat €<input name="lm" type="number" step="0.01"></label>
         <label>SV Jahreswerte bisher (KV + PV + RV + AV) €<input name="sj" type="number" step="0.01"></label>
         <label>SV Monat (KV + PV + RV + AV) €<input name="sm" type="number" step="0.01"></label>
-        <p class="wide small muted" id="hfVor"></p>
+        <p class="wide small" id="hfVor"></p>
         <div class="actions wide"><span class="grow"></span><button type="button" class="btn ghost" id="hfC">Abbrechen</button><button class="btn primary">Übernehmen</button></div>
       </form>`;
     $("#modal").classList.remove("hidden");
@@ -382,10 +390,49 @@
       return { brutto: r2(v("bj") + v("bm") * rest), lst: f.elements.lj.value === "" ? "" : r2(v("lj") + v("lm") * rest),
                sv: f.elements.sj.value === "" ? "" : r2(v("sj") + v("sm") * rest) };
     };
-    f.oninput = () => {
+    const vorschau = () => {
       const c = calc();
-      $("#hfVor").textContent = `Ergebnis: Brutto ${API.eur(c.brutto)}${c.lst !== "" ? " · Lohnsteuer " + API.eur(c.lst) : ""}${c.sv !== "" ? " · SV " + API.eur(c.sv) : ""} im Jahr`;
+      $("#hfVor").innerHTML = f.elements.bj.value === "" ? "" : `<strong>Ergebnis fürs ganze Jahr:</strong> Brutto ${eur(c.brutto)}${c.lst !== "" ? " · Lohnsteuer " + eur(c.lst) : ""}${c.sv !== "" ? " · Sozialversicherung " + eur(c.sv) : ""}`;
     };
+    f.oninput = vorschau;
+
+    async function verarbeite(file) {
+      if (!file) return;
+      if (!root.EFAbrechnung) { API.toast("PDF-Leser fehlt (js/abrechnung.js)", "err"); return; }
+      $("#hfInfo").innerHTML = `<p class="small muted">Lese ${esc(file.name)} …</p>`;
+      let r;
+      try { r = await root.EFAbrechnung.lese(file); }
+      catch (e) { $("#hfInfo").innerHTML = `<div class="hfbox warn">PDF konnte nicht gelesen werden: ${esc(e.message)}</div>`; return; }
+      if (!r.textGefunden) { $("#hfInfo").innerHTML = `<div class="hfbox warn">In diesem PDF ist kein Text enthalten (eingescannt/Foto). Bitte die Werte unten von Hand eintragen.</div>`; return; }
+      const setze = (k, v) => { if (v != null && f.elements[k]) f.elements[k].value = v; };
+      setze("m", r.monat); setze("bj", r.bj); setze("bm", r.bm); setze("lj", r.lj); setze("lm", r.lm); setze("sj", r.sj); setze("sm", r.sm);
+      erkannt = {};
+      if (r.stkl) erkannt.stkl = r.stkl;
+      if (r.kinderfreibetrag != null) erkannt.kinder = Math.ceil(r.kinderfreibetrag);
+      if (r.kist) erkannt.kist = r.kist;
+      const ok = [];
+      if (r.typ === "jahr") ok.push(`Lohnsteuerbescheinigung ${r.jahr || ""}`.trim());
+      else if (r.monat) ok.push(`Abrechnung ${MONATSNAMEN[r.monat - 1]} ${r.jahr || ""}`.trim());
+      if (r.stkl) ok.push("Steuerklasse " + r.stkl);
+      if (r.kinderfreibetrag != null) ok.push("Kinderfreibetrag " + String(r.kinderfreibetrag).replace(".", ","));
+      if (r.kist === "keine") ok.push("keine Kirchensteuer");
+      if (r.bj != null) ok.push(`Steuerbrutto ${r.bm ? eur(r.bm) + " / " : ""}${eur(r.bj)}`);
+      if (r.lj != null) ok.push(`Lohnsteuer ${r.lm ? eur(r.lm) + " / " : ""}${eur(r.lj)}`);
+      if (r.sj != null) ok.push(`Sozialversicherung ${r.sm ? eur(r.sm) + " / " : ""}${eur(r.sj)}`);
+      const warn = r.fehlt.slice();
+      if (r.jahr && String(r.jahr) !== String(CUR.jahr)) warn.unshift(`Die Abrechnung ist aus ${r.jahr}, angezeigt wird ${CUR.jahr}.`);
+      $("#hfInfo").innerHTML = `<div class="hfbox ok"><strong>Erkannt:</strong> ${ok.map(esc).join(" · ") || "–"}</div>
+        ${warn.length ? `<div class="hfbox warn"><strong>Bitte prüfen:</strong> ${warn.map(esc).join(" · ")}</div>` : ""}
+        <p class="small muted">Die Felder unten sind ausgefüllt – kurz vergleichen, dann „Übernehmen“.</p>`;
+      vorschau();
+    }
+    $("#hfFile").onchange = e => verarbeite(e.target.files[0]);
+    const drop = $("#hfDrop");
+    drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+    drop.ondragleave = () => drop.classList.remove("over");
+    drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); verarbeite(e.dataTransfer.files[0]); };
+    if (datei) verarbeite(datei);
+
     $("#hfC").onclick = close;
     f.onsubmit = e => {
       e.preventDefault();
@@ -393,11 +440,14 @@
       CUR[`p${n}_brutto`] = c.brutto;
       if (c.lst !== "") CUR[`p${n}_lst`] = c.lst;
       if (c.sv !== "") CUR[`p${n}_sv`] = c.sv;
+      if (erkannt.stkl) CUR[`p${n}_stkl`] = erkannt.stkl;
+      if (erkannt.kinder != null && n === 1) CUR.kinder = erkannt.kinder;
+      if (erkannt.kist === "keine" && CUR.kist === "beide") CUR.kist = "eine";
       STORE.jahre[CUR.jahr] = Object.assign({}, CUR);
       close();
       render(API, CUR.jahr);
       $("#fiSave").textContent = "Speichern *";
-      API.toast("Hochrechnung übernommen – bitte speichern");
+      API.toast("Werte übernommen – bitte speichern");
     };
   }
 

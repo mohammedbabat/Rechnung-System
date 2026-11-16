@@ -262,3 +262,11 @@ main { min-width: 0; }
 .card { border-radius: 16px; box-shadow: 0 2px 10px rgba(123,47,190,.05); }
 .kpi { border-radius: 16px; }
 .spinner { background: linear-gradient(90deg, #7B2FBE, #F97316); }
+
+/* Gehaltsabrechnung hochladen */
+.dropzone { border: 2px dashed var(--line); border-radius: 14px; padding: 18px; text-align: center; background: var(--surface2); margin-bottom: 12px; display: grid; gap: 6px; transition: .15s; }
+.dropzone.over { border-color: var(--accent); background: var(--purple-soft); }
+.dropzone .link { display: inline; color: var(--accent); font-size: 14px; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.hfbox { padding: 10px 12px; border-radius: 10px; font-size: 13px; margin-bottom: 8px; line-height: 1.5; }
+.hfbox.ok { background: #F3FBF5; border: 1px solid #BFE5CB; }
+.hfbox.warn { background: #FFFBEB; border: 1px solid #F5D39B; }
