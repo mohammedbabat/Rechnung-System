@@ -286,3 +286,39 @@ main { min-width: 0; }
 .prow .klsel { font-weight: 600; color: var(--accent); }
 .abrliste { margin-top: 12px; }
 .abrliste .tbl td, .abrliste .tbl th { padding: 6px 8px; font-size: 12.5px; }
+
+/* Steuererklärung – Ausgaben & Belege */
+.stgr { border: 1px solid var(--line); border-radius: 12px; margin-top: 10px; background: #fff; }
+.stgr[open] { background: var(--bg); }
+.stgr > summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; }
+.stgr > summary::-webkit-details-marker { display: none; }
+.stgr > summary::after { content: "▾"; color: var(--muted); transition: transform .15s; }
+.stgr:not([open]) > summary::after { transform: rotate(-90deg); }
+.stgr > summary .grow { display: flex; flex-direction: column; min-width: 0; }
+.sticon { font-size: 20px; }
+.stsum { color: var(--accent); white-space: nowrap; }
+.stkat { background: #fff; border-top: 1px solid var(--line); padding: 12px 14px; }
+.stkat p { margin: 4px 0 8px; }
+.strow { display: grid; gap: 6px; align-items: center; margin-bottom: 6px;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) auto; }
+.strow.st-geraet { grid-template-columns: minmax(0, 1.8fr) minmax(0, 1.1fr) minmax(0, 1.1fr) minmax(0, .9fr) minmax(0, .7fr) minmax(0, 1.1fr) minmax(0, .7fr) minmax(0, 1fr) auto; }
+.strow.st-monat { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.1fr) minmax(0, .9fr) minmax(0, .6fr) minmax(0, 1.3fr) minmax(0, .7fr) minmax(0, 1fr) auto; }
+.strow.st-haus { grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) minmax(0, 1fr) auto; }
+.strow input, .strow select { padding: 6px 8px; font-size: 13px; min-width: 0; width: 100%; }
+.stkopf { margin-bottom: 2px; }
+.stkopf span { font-size: 11px; color: var(--muted); font-weight: 600; padding-left: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stkopf .r { text-align: right; }
+.stwert { text-align: right; font-weight: 600; display: flex; flex-direction: column; font-size: 13px; }
+.stwert .small { font-weight: 400; font-size: 11px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.chip { border: 1px solid var(--line); background: var(--surface2); color: var(--text-mid); border-radius: 999px; padding: 5px 11px; font: inherit; font-size: 12.5px; cursor: pointer; }
+.chip:hover { border-color: var(--accent-2); color: var(--accent); }
+.chip.ghost { background: #fff; color: var(--accent); font-weight: 600; }
+.sthead td { background: var(--surface2); font-weight: 600; color: var(--accent); font-size: 12.5px; }
+@media (max-width: 760px) {
+  .strow, .strow.st-geraet, .strow.st-monat, .strow.st-haus { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding: 8px; border: 1px solid var(--line); border-radius: 10px; }
+  .strow .sttext { grid-column: 1 / -1; }
+  .stkopf { display: none; }
+  .stwert { text-align: left; }
+  .stgr > summary .small.muted:not(.stinfo) { display: none; }
+}
