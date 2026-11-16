@@ -67,7 +67,7 @@
     ["loeschen", "Kunden und Artikel löschen"],
     ["einstellungen", "Einstellungen und Firmendaten"],
     ["benutzer", "Benutzer und Berechtigungen verwalten"],
-    ["finanzen", "Private Finanzen & Steuerübersicht (eigene Daten im eigenen OneDrive)"]
+    ["finanzen", "Private Finanzen & Steuerübersicht (geschützte SharePoint-Bibliothek EF_Privat)"]
   ];
   const ROLLEN = {
     Administrator: RECHTE.map(r => r[0]),

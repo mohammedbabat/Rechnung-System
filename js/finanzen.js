@@ -3,7 +3,7 @@
 // Zusammenveranlagung (Splitting), Kinderfreibetrag-Günstigerprüfung, Soli, Kirchensteuer,
 // Gewerbesteuer mit § 35-Anrechnung, Erstattung/Nachzahlung, Rücklage fürs Unternehmen,
 // Lohnsteuer nach Steuerklasse (PAP 2026), Steuerklassen-Vergleich, Grafiken, Empfehlungen.
-// Daten liegen NICHT in SharePoint, sondern im eigenen OneDrive des angemeldeten Benutzers.
+// Daten liegen in SharePoint in der Bibliothek EF_Privat (eigene Berechtigungen, nur Inhaber + Ehepartner).
 // Alle Ergebnisse sind Schätzungen – keine Steuerberatung.
 // ============================================================
 (function (root) {
@@ -224,7 +224,7 @@
   const FARBE = { netto: "#7B2FBE", sv: "#A898C8", est: "#F97316", gewst: "#DB2777", grenze: "#DC2626", hilf: "#94A3B8" };
   let STORE = null, LOADED = false, LOAD_ERR = null, CUR = null, API = null;
   // Speicherort: SharePoint-Bibliothek EF_Privat (eigene Berechtigungen, nur Inhaber + Ehepartner)
-  let ZUGRIFF = null, KEIN_ZUGRIFF = false, MIGRIERT = false;
+  let ZUGRIFF = null, KEIN_ZUGRIFF = false;
   const istAdmin = api => !!api.S.me && api.S.me.Rolle === "Administrator";
 
   const $ = s => document.querySelector(s);
@@ -232,15 +232,11 @@
   const lokalSchreiben = s => { try { window.localStorage.setItem(LOCAL_KEY, JSON.stringify(s)); return true; } catch (_) { return false; } };
 
   async function laden(api) {
-    KEIN_ZUGRIFF = false; MIGRIERT = false; ZUGRIFF = null;
+    KEIN_ZUGRIFF = false; ZUGRIFF = null;
     try {
       const r = await api.G.privatLaden(istAdmin(api));     // Administrator legt die Bibliothek bei Bedarf an
       if (!r.bibliothek) KEIN_ZUGRIFF = true;
       STORE = r.daten;
-      if (!STORE && istAdmin(api)) {                         // ältere Daten aus dem OneDrive einmalig übernehmen
-        const alt = await api.G.onedriveAltLaden();
-        if (alt) { STORE = alt; MIGRIERT = true; }
-      }
       try { ZUGRIFF = await api.G.privatZugriff(); } catch (_) { ZUGRIFF = null; }
       LOAD_ERR = null;
     } catch (e) {
@@ -281,7 +277,7 @@
     if (!api.can("finanzen")) { location.hash = "#/dashboard"; return; }
     api.setNav("finanzen");
     if (!LOADED) {
-      api.view(`<div class="card">Lade private Daten aus deinem OneDrive …</div>`);
+      api.view(`<div class="card">Lade Finanzdaten aus SharePoint …</div>`);
       api.busy(async () => { await laden(api); render(api, sub); });
       return;
     }
@@ -309,7 +305,6 @@
         <button class="btn primary" id="fiSave" type="button">Speichern</button></div>
       ${LOAD_ERR ? `<div class="card warnbox"><strong>SharePoint nicht erreichbar:</strong> ${api.esc(LOAD_ERR)}<br>
         Die Daten werden vorerst nur in diesem Browser gespeichert.</div>` : ""}
-      ${MIGRIERT ? `<div class="card infobox">Deine bisherigen Angaben aus dem OneDrive wurden übernommen. Klicke auf <strong>Speichern</strong>, um sie in SharePoint abzulegen.</div>` : ""}
       ${statusHtml(api)}
       <div class="card"><h3>Haushalt</h3><div class="grid g4">
         ${feld("kinder", "Kinder (mit Kindergeld)")}
@@ -368,14 +363,13 @@
         await API.G.privatSpeichern(STORE);
         const neu = !ZUGRIFF;
         if (neu) { try { ZUGRIFF = await API.G.privatZugriff(); } catch (_) { /* egal */ } }
-        MIGRIERT = false;
         LOAD_ERR = null;
         $("#fiSave").textContent = "Speichern";
         API.toast("In SharePoint gespeichert (" + API.G.privatBibliothek() + ")");
         if (neu) render(API, CUR.jahr);
       } catch (e) {
         lokalSchreiben(STORE);
-        API.toast("OneDrive-Fehler – nur in diesem Browser gespeichert: " + e.message, "err");
+        API.toast("SharePoint-Fehler – nur in diesem Browser gespeichert: " + e.message, "err");
       }
     });
   }
