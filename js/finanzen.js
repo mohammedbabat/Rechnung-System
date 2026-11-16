@@ -275,7 +275,7 @@
     p1_name: "Mohammed", p1_stkl: "4", p1_perioden: [], p1_abr: [], p1_brutto: "", p1_wk: "", p1_km: "", p1_tage: "", p1_hoTage: "", p1_sv: "", p1_lst: "", p1_brutto2: "", p1_lst2: "",
     p2_name: "Ehefrau", p2_stkl: "4", p2_perioden: [], p2_abr: [], p2_brutto: "", p2_wk: "", p2_km: "", p2_tage: "", p2_hoTage: "", p2_sv: "", p2_lst: "", p2_brutto2: "", p2_lst2: "",
     inhaber: "1", quelle: "ef", einnahmenManuell: "", ausgaben: "", hebesatz: 500,
-    vorauszahlungen: "", weitereAbzuege: "", kitaKosten: "", kitaEssen: "", kitaZuschuss: "", posten: []
+    vorauszahlungen: "", weitereAbzuege: "", kitaKosten: "", kitaEssen: "", kitaZuschuss: "", posten: [], wisoOk: {}
   };
   const LOCAL_KEY = "ef_finanzen_lokal";
   const FARBE = { netto: "#7B2FBE", sv: "#A898C8", est: "#F97316", gewst: "#DB2777", grenze: "#DC2626", hilf: "#94A3B8" };
@@ -417,6 +417,7 @@
     const onChange = e => {
       const k = e.target.dataset.k;
       if (!k) return;
+      if (e.type === "change" && String(CUR[k] ?? "") === e.target.value) return;   // schon bei "input" übernommen – sonst geht der nächste Klick verloren
       CUR[k] = e.target.value;
       STORE.jahre[jahr] = Object.assign({}, CUR);
       $("#fiSave").textContent = "Speichern *";
@@ -949,43 +950,132 @@
   }
 
 
-  // ---------- Übersicht für die Steuererklärung (ELSTER) ----------
-  function elsterHtml(r) {
-    const P = root.EFPosten, esc = API.esc, eur = API.eur;
-    if (!P) return "";
-    const k = key => r.ps.kat[key] || 0, zeilen = [];
-    const add = (anlage, was, wert, hinweis = "") => { if (wert) zeilen.push({ anlage, was, wert, hinweis }); };
-    [1, 2].forEach(n => {
-      const pr = r[`p${n}`], name = pr.name || "Person " + n, ki = r.ps.wkKat[n], an = `Anlage N – ${name}`;
-      if (pr.fahrt) add(an, "Wege zur Arbeit", eur(pr.fahrt), `${num(CUR[`p${n}_tage`])} Tage, ${num(CUR[`p${n}_km`])} km einfache Strecke`);
-      if (pr.ho) add(an, "Homeoffice-Pauschale", eur(pr.ho), `${num(CUR[`p${n}_hoTage`])} Tage`);
-      P.KATS.filter(x => x.gruppe === "wk").forEach(x => add(an, x.titel, ki[x.key] ? eur(ki[x.key]) : 0));
-      if (pr.brutto > 0) add(an, pr.wkPauschal ? "→ Arbeitnehmer-Pauschbetrag greift" : "→ Werbungskosten gesamt", eur(pr.wk),
-        pr.wkPauschal ? "eigene Kosten unter 1.230 € – trotzdem eintragen schadet nicht" : "");
+  // ---------- Ausfüllhilfe für WISO Steuer ----------
+  // Reihenfolge wie im WISO-Interview. Bezeichnungen können je WISO-Version leicht abweichen.
+  const zahlDe = v => Number(v || 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false });
+
+  function wisoDaten(r) {
+    const P = root.EFPosten, ab = [];
+    const bereich = (titel, pfad, anlage) => { const b = { titel, pfad, anlage, zeilen: [] }; ab.push(b); return b; };
+    // zeile: id (stabil für das Häkchen), was, wert (Zahl oder Text), einheit, hinweis, ebene (0 = Summe/Feld, 1 = Einzelbeleg)
+    const z = (b, id, was, wert, opt = {}) => { if (wert === 0 || wert === "" || wert == null) return; b.zeilen.push(Object.assign({ id, was, wert }, opt)); };
+    const posten = (key, fuer) => (CUR.posten || []).filter(x => x.kat === key && (fuer == null || String(x.fuer) === fuer));
+    const einzel = (b, key, fuer, idp) => posten(key, fuer).forEach(x => {
+      const w = P.wert(x, CUR.jahr);
+      if (!w.wert) return;
+      const det = [];
+      if (P.KAT[key].typ === "geraet") { if (x.datum) det.push("gekauft " + API.esc(String(x.datum).split("-").reverse().join("."))); det.push("Preis " + zahlDe(x.betrag) + " €"); if (num(x.anteil) && num(x.anteil) !== 100) det.push(num(x.anteil) + " % beruflich"); if (w.info) det.push(w.info); }
+      if (P.KAT[key].typ === "monat") det.push(`${zahlDe(x.betrag)} €/Monat, ${w.info}`);
+      z(b, `${idp}:${x.id}`, x.text || P.KAT[key].titel, w.wert, { euro: true, hinweis: det.join(" · "), ebene: 1 });
     });
-    if (num(CUR.kitaKosten)) add("Anlage Kind", "Kinderbetreuungskosten", eur(num(CUR.kitaKosten) - num(CUR.kitaEssen)), num(CUR.kitaZuschuss) ? `steuerfreier Arbeitgeberzuschuss ${eur(num(CUR.kitaZuschuss))} angeben` : "ohne Essensgeld");
-    add("Anlage Vorsorgeaufwand", "Haftpflicht-, Unfall-, BU-, Risikolebensversicherung", k("versicherung") ? eur(k("versicherung")) : 0);
-    add("Anlage Sonderausgaben", "Spenden & Mitgliedsbeiträge", k("spenden") ? eur(k("spenden")) : 0);
-    add("Anlage Kind", "Schulgeld", k("schulgeld") ? eur(k("schulgeld")) : 0);
-    add("Anlage Außergewöhnliche Belastungen", "Krankheitskosten", k("krankheit") ? eur(k("krankheit")) : 0);
-    add("Anlage Außergewöhnliche Belastungen", "Sonstige Belastungen", k("sonstigeAgb") ? eur(k("sonstigeAgb")) : 0);
-    add("Anlage Haushaltsnahe Aufwendungen", "Haushaltsnahe Dienstleistungen", k("haushaltsnah") ? eur(k("haushaltsnah")) : 0);
-    add("Anlage Haushaltsnahe Aufwendungen", "Handwerkerleistungen (Arbeitskosten)", k("handwerker") ? eur(k("handwerker")) : 0);
+    if (!P) return ab;
+
+    [1, 2].forEach(n => {
+      const pr = r[`p${n}`], name = pr.name || "Person " + n;
+      if (!pr.brutto && !r.ps.wk[n] && !pr.fahrt) return;
+      const b = bereich(`Arbeitnehmer – ${name}`, "Einkünfte › Arbeitnehmer (Lohn/Gehalt)", "Anlage N");
+      z(b, `p${n}:brutto`, "Bruttoarbeitslohn", pr.brutto, { euro: true, hinweis: "kommt per Steuer-Abruf aus der Lohnsteuerbescheinigung – nur vergleichen", info: true });
+      z(b, `p${n}:lst`, "Einbehaltene Lohnsteuer", pr.lst, { euro: true, hinweis: "kommt per Steuer-Abruf – nur vergleichen", info: true });
+      if (pr.fahrt) {
+        z(b, `p${n}:tage`, "Wege zur Arbeit: Arbeitstage", num(CUR[`p${n}_tage`]), { einheit: "Tage", hinweis: "Werbungskosten › Wege zur Arbeit" });
+        z(b, `p${n}:km`, "Wege zur Arbeit: einfache Entfernung", num(CUR[`p${n}_km`]), { einheit: "km", hinweis: `ergibt ${zahlDe(pr.fahrt)} € (WISO rechnet selbst)` });
+      }
+      if (pr.ho) z(b, `p${n}:ho`, "Homeoffice-Tage", num(CUR[`p${n}_hoTage`]), { einheit: "Tage", hinweis: "Werbungskosten › Homeoffice/Arbeitszimmer – Tagespauschale" });
+      P.KATS.filter(k => k.gruppe === "wk").forEach(k => {
+        const s = r.ps.wkKat[n][k.key];
+        if (!s) return;
+        z(b, `p${n}:${k.key}`, k.titel, s, { euro: true, hinweis: "Werbungskosten › " + k.titel, summe: true });
+        einzel(b, k.key, String(n), `p${n}`);
+      });
+    });
+
+    const kinder = bereich("Kinder", "Kinder › Kinderbetreuungskosten / Schulgeld", "Anlage Kind");
+    if (num(CUR.kitaKosten)) {
+      z(kinder, "kita", "Kinderbetreuungskosten (ohne Essen)", r2(num(CUR.kitaKosten) - num(CUR.kitaEssen)), { euro: true, hinweis: num(CUR.kitaEssen) ? `Gesamt ${zahlDe(CUR.kitaKosten)} € − Essen ${zahlDe(CUR.kitaEssen)} €` : "" });
+      z(kinder, "kitaZ", "Steuerfreier Arbeitgeberzuschuss", num(CUR.kitaZuschuss), { euro: true, hinweis: "als Erstattung/Zuschuss angeben" });
+    }
+    einzel(kinder, "schulgeld", null, "h");
+
+    const vers = bereich("Versicherungen", "Versicherungen › Haftpflicht, Unfall, Berufsunfähigkeit, Risikoleben", "Anlage Vorsorgeaufwand");
+    einzel(vers, "versicherung", null, "h");
+    const sp = bereich("Spenden & Mitgliedsbeiträge", "Spenden & Mitgliedsbeiträge", "Anlage Sonderausgaben");
+    einzel(sp, "spenden", null, "h");
+    const ges = bereich("Krankheit & Belastungen", "Außergewöhnliche Belastungen › Krankheitskosten", "Anlage Außergewöhnliche Belastungen");
+    einzel(ges, "krankheit", null, "h"); einzel(ges, "sonstigeAgb", null, "h");
+    const hh = bereich("Haus & Wohnung", "Haus & Wohnung › Haushaltsnahe Dienstleistungen / Handwerkerleistungen", "Anlage Haushaltsnahe Aufwendungen");
+    einzel(hh, "haushaltsnah", null, "h"); einzel(hh, "handwerker", null, "h");
+
     if (r.einnahmen || r.ausgaben) {
       const inh = (r.inhaber === 2 ? r.p2 : r.p1).name || "Inhaber";
-      add(`Anlage EÜR / G – ${inh}`, "Betriebseinnahmen", eur(r.einnahmen));
-      Object.keys(r.ps.firmaKat).forEach(key => add(`Anlage EÜR / G – ${inh}`, "Betriebsausgaben: " + P.KAT[key].titel, eur(r.ps.firmaKat[key])));
-      if (num(CUR.ausgaben)) add(`Anlage EÜR / G – ${inh}`, "Weitere Betriebsausgaben", eur(num(CUR.ausgaben)));
-      add(`Anlage EÜR / G – ${inh}`, "→ Gewinn", eur(r.gewinn));
+      const g = bereich(`Gewerbebetrieb – ${inh}`, "Einkünfte › Gewerbebetrieb › Einnahmenüberschussrechnung", "Anlage G + Anlage EÜR");
+      z(g, "g:ein", "Betriebseinnahmen (Kleinunternehmer, brutto = netto)", r.einnahmen, { euro: true });
+      Object.keys(r.ps.firmaKat).forEach(key => { z(g, "g:" + key, "Betriebsausgaben: " + P.KAT[key].titel, r.ps.firmaKat[key], { euro: true, summe: true }); einzel(g, key, "firma", "g"); });
+      z(g, "g:weitere", "Weitere Betriebsausgaben", num(CUR.ausgaben), { euro: true });
+      z(g, "g:gewinn", "= Gewinn (zum Vergleich mit WISO)", r.gewinn, { euro: true, info: true });
     }
-    if (!zeilen.length) return "";
-    let letzte = "";
-    return `<div class="card"><h3>🧾 Übersicht für die Steuererklärung ${esc(CUR.jahr)}</h3>
-      <p class="small muted">Diese Werte trägst du in ELSTER (oder gibst sie dem Steuerberater) in die genannte Anlage ein.</p>
-      <div class="tblwrap"><table class="tbl fitbl"><tbody>
-      ${zeilen.map(z => { const kopf = z.anlage !== letzte ? `<tr class="sthead"><td colspan="2">${esc(z.anlage)}</td></tr>` : ""; letzte = z.anlage;
-        return kopf + `<tr><td>${esc(z.was)}${z.hinweis ? `<div class="small muted">${esc(z.hinweis)}</div>` : ""}</td><td class="r">${esc(z.wert)}</td></tr>`; }).join("")}
-      </tbody></table></div></div>`;
+    return ab.filter(b => b.zeilen.length);
+  }
+
+  function wisoHtml(r) {
+    const esc = API.esc, ok = CUR.wisoOk || {};
+    const daten = wisoDaten(r);
+    if (!daten.length) return "";
+    const alle = daten.flatMap(b => b.zeilen).filter(x => !x.info), fertig = alle.filter(x => ok[x.id]).length;
+    const wertText = x => x.euro ? API.eur(x.wert) : typeof x.wert === "number" ? `${x.wert.toLocaleString("de-DE")} ${x.einheit || ""}` : esc(x.wert);
+    return `<div class="card" id="wisoCard"><div class="row between"><h3>🧾 Ausfüllhilfe WISO Steuer ${esc(CUR.jahr)}</h3>
+        <span class="row gap"><button type="button" class="btn ghost small" id="wisoCsv">CSV herunterladen</button><button type="button" class="btn ghost small" id="wisoPdf">PDF herunterladen</button></span></div>
+      <p class="small muted">In WISO zuerst <strong>Vorjahr übernehmen</strong> und den <strong>Steuer-Abruf</strong> starten (Löhne, Lohnsteuer, Krankenkasse kommen dann automatisch).
+        Danach die Werte unten der Reihe nach übertragen: <strong>📋</strong> kopiert die Zahl, das Häkchen merkt sich, was schon drin ist. Menünamen können je WISO-Version leicht abweichen.</p>
+      <div class="wisoprog"><div style="width:${alle.length ? Math.round(fertig / alle.length * 100) : 0}%"></div></div>
+      <p class="small"><strong>${fertig} von ${alle.length}</strong> Werten übertragen${fertig && fertig === alle.length ? " – fertig ✓" : ""}
+        ${fertig ? ` · <button type="button" class="link small" id="wisoReset">Häkchen zurücksetzen</button>` : ""}</p>
+      ${daten.map(b => `<div class="wisobox"><div class="wisokopf"><strong>${esc(b.titel)}</strong><span class="small muted">WISO: ${esc(b.pfad)} · ${esc(b.anlage)}</span></div>
+        <div class="tblwrap"><table class="tbl fitbl wisotbl"><tbody>${b.zeilen.map(x => `<tr class="${x.ebene ? "einz" : ""} ${x.info ? "info" : ""} ${ok[x.id] ? "done" : ""}">
+          <td class="chkc">${x.info ? "" : `<input type="checkbox" data-wok="${esc(x.id)}" ${ok[x.id] ? "checked" : ""} aria-label="übertragen">`}</td>
+          <td>${x.ebene ? "↳ " : ""}${esc(x.was)}${x.hinweis ? `<div class="small muted">${x.hinweis}</div>` : ""}</td>
+          <td class="r nowrap">${wertText(x)}<button type="button" class="icon copy" data-wcopy="${typeof x.wert === "number" ? (x.euro ? zahlDe(x.wert) : String(x.wert)) : esc(x.wert)}" title="Zahl kopieren">📋</button></td></tr>`).join("")}
+        </tbody></table></div></div>`).join("")}
+    </div>`;
+  }
+
+  function bindWiso(r) {
+    const card = $("#wisoCard");
+    if (!card) return;
+    card.querySelectorAll("[data-wok]").forEach(c => { c.onchange = () => {
+      CUR.wisoOk = Object.assign({}, CUR.wisoOk || {});
+      if (c.checked) CUR.wisoOk[c.dataset.wok] = true; else delete CUR.wisoOk[c.dataset.wok];
+      STORE.jahre[CUR.jahr] = Object.assign({}, CUR); $("#fiSave").textContent = "Speichern *"; renderRes();
+    }; });
+    card.querySelectorAll("[data-wcopy]").forEach(bt => { bt.onclick = async () => {
+      const t = bt.dataset.wcopy;
+      try { await navigator.clipboard.writeText(t); API.toast(`Kopiert: ${t}`); }
+      catch (_) { window.prompt("Zum Kopieren markieren (Strg+C):", t); }
+    }; });
+    const reset = $("#wisoReset");
+    if (reset) reset.onclick = () => { CUR.wisoOk = {}; STORE.jahre[CUR.jahr] = Object.assign({}, CUR); $("#fiSave").textContent = "Speichern *"; renderRes(); };
+    const daten = () => wisoDaten(r);
+    const datei = (inhalt, name, typ) => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([inhalt], { type: typ })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); };
+    const plain = h => String(h || "").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&");
+    $("#wisoCsv").onclick = () => {
+      const q = v => `"${String(v).replace(/"/g, '""')}"`;
+      const rows = [["Bereich", "WISO", "Anlage", "Eintrag", "Wert", "Einheit", "Hinweis", "Übertragen"]];
+      daten().forEach(b => b.zeilen.forEach(x => rows.push([b.titel, b.pfad, b.anlage, (x.ebene ? "  " : "") + x.was, typeof x.wert === "number" ? (x.euro ? zahlDe(x.wert) : String(x.wert).replace(".", ",")) : x.wert, x.euro ? "€" : (x.einheit || ""), plain(x.hinweis), (CUR.wisoOk || {})[x.id] ? "ja" : ""])));
+      datei("﻿" + rows.map(r => r.map(q).join(";")).join("\r\n"), `WISO-Ausfuellhilfe-${CUR.jahr}.csv`, "text/csv;charset=utf-8");
+    };
+    $("#wisoPdf").onclick = () => {
+      if (!root.pdfMake) return API.toast("PDF-Bibliothek nicht geladen", "err");
+      const content = [{ text: `Ausfüllhilfe WISO Steuer ${CUR.jahr}`, fontSize: 16, bold: true, margin: [0, 0, 0, 4] },
+        { text: `${r.p1.name || "Person 1"} & ${r.p2.name || "Person 2"} · erstellt am ${API.today().split("-").reverse().join(".")} · Schätzung, keine Steuerberatung`, fontSize: 8.5, color: "#666666", margin: [0, 0, 0, 12] }];
+      daten().forEach(b => {
+        content.push({ text: b.titel, bold: true, fontSize: 11.5, color: "#7B2FBE", margin: [0, 10, 0, 1] }, { text: `WISO: ${b.pfad} · ${b.anlage}`, fontSize: 8, color: "#666666", margin: [0, 0, 0, 4] });
+        content.push({ table: { widths: [12, "*", 80], body: b.zeilen.map(x => [
+          { text: x.info ? "" : ((CUR.wisoOk || {})[x.id] ? "☑" : "☐"), fontSize: 10 },
+          { stack: [{ text: (x.ebene ? "   " : "") + x.was, bold: !x.ebene }, x.hinweis ? { text: plain(x.hinweis), fontSize: 7.5, color: "#666666" } : ""] },
+          { text: x.euro ? API.eur(x.wert) : `${typeof x.wert === "number" ? x.wert.toLocaleString("de-DE") : x.wert} ${x.einheit || ""}`, alignment: "right" }]) },
+          layout: { hLineWidth: () => 0.5, vLineWidth: () => 0, hLineColor: () => "#E8DCFF", paddingTop: () => 4, paddingBottom: () => 4 } });
+      });
+      root.pdfMake.createPdf({ pageSize: "A4", pageMargins: [45, 40, 45, 40], content, defaultStyle: { fontSize: 9.5 } }).download(`WISO-Ausfuellhilfe-${CUR.jahr}.pdf`);
+    };
   }
 
   // ---------- Ergebnisse ----------
@@ -1103,10 +1193,11 @@
           </tbody></table></div></div>
         </div>
       </div>
-      ${elsterHtml(r)}
+      ${wisoHtml(r)}
       <p class="small muted">Vereinfachte Schätzung nach § 32a EStG (${r.basisJahr}): Grundfreibetrag ${eur(r.p.gfb)}, Kinderfreibetrag ${eur(r.p.kfb)} je Kind, Soli-Freigrenze ${eur(2 * r.p.soliFG)} (zusammen).
         Lohnsteuer-Schätzung vereinfacht nach Programmablaufplan (Vorsorgepauschale geschätzt). Nicht berücksichtigt u. a.: Riester/Rürup, Unterhalt, Behinderten-/Pflege-Pauschbeträge, doppelte Haushaltsführung,
         Progressionsvorbehalt (Elterngeld, Krankengeld, ALG), genaue Höchstbeträge der Vorsorgeaufwendungen. Für verbindliche Zahlen: Steuerberater oder Lohnsteuerhilfeverein.</p>`;
+    bindWiso(r);
   }
 
   root.EFFinanzen = { render, berechne, tarif, splitting, soli, lohnsteuer, abGewinn, PARAM };
