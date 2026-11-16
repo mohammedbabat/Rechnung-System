@@ -441,6 +441,7 @@
 
   // ---------- Steuererklärung: Ausgaben & Belege ----------
   const OFFEN = new Set(["wk"]);
+  let HINWEISE = [];
   const neueId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   function postenSpeichernLokal() { STORE.jahre[CUR.jahr] = Object.assign({}, CUR); $("#fiSave").textContent = "Speichern *"; }
   const fuerName = f => f === "firma" ? "Firma" : f === "2" ? (CUR.p2_name || "Person 2") : (CUR.p1_name || "Person 1");
@@ -449,6 +450,7 @@
     const P = root.EFPosten, esc = API.esc, eur = API.eur;
     if (!P) return `<p class="small muted">Belegliste nicht geladen (js/steuerposten.js fehlt).</p>`;
     const r = berechne(CUR, 0), ab = r.ab;
+    try { HINWEISE = pruefen(r); } catch (_) { HINWEISE = []; }
     const gruppenWert = {
       wk: r2(r.ps.wk[1] + r.ps.wk[2] + r.ps.firma),
       sa: r2(ab.sonderausgaben || 0), agb: r2(ab.agb || 0), hh: r2(ab.ermaessigung || 0)
@@ -478,8 +480,10 @@
     const fuerOpts = x => `<select data-pf="fuer" aria-label="Für wen">${[["1", fuerName("1")], ["2", fuerName("2")], ["firma", "Firma (Betriebsausgabe)"]]
       .map(([v, t]) => `<option value="${v}" ${String(x.fuer) === v ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
     const inp = (x, f, ph, typ = "number", extra = "") => `<input data-pf="${f}" type="${typ}" ${typ === "number" ? 'step="0.01" inputmode="decimal"' : ""} value="${esc(x[f] ?? "")}" placeholder="${esc(ph)}" aria-label="${esc(ph)}" ${extra}>`;
+    const hinweise = HINWEISE;
     const zeile = x => {
       const w = P.wert(x, CUR.jahr);
+      const hw = hinweise.filter(h => h.pid === x.id);
       let felder = "";
       if (k.typ === "geraet") {
         const teuer = num(x.betrag) > (x.fuer === "firma" ? P.GWG_FIRMA : P.GWG_PRIVAT) && x.art !== "computer";
@@ -494,7 +498,8 @@
       return `<div class="strow st-${k.typ}${k.fuer === "haus" ? " st-haus" : ""}" data-pid="${esc(x.id)}">
         ${inp(x, "text", "Bezeichnung", "text", 'class="sttext"')}${k.fuer === "person" ? fuerOpts(x) : ""}${felder}
         <span class="stwert" data-wert="${esc(x.id)}" title="${esc(w.info)}">${eur(w.wert)}${w.info ? `<span class="small muted">${esc(w.info)}</span>` : ""}</span>
-        <button type="button" class="icon" data-pdel title="Eintrag entfernen">✕</button></div>`;
+        <button type="button" class="icon" data-pdel title="Eintrag entfernen">✕</button>
+        ${hw.map(h => `<div class="stwarn p-${h.lvl}">${h.lvl === "warn" ? "⚠️" : "ℹ️"} ${esc(h.text)}</div>`).join("")}</div>`;
     };
     return `<div class="stkat"><div class="row between"><strong>${esc(k.titel)}</strong><span class="small" data-ksum="${k.key}">${summe ? eur(summe) : ""}</span></div>
       <p class="small muted">${esc(k.hilfe)}</p>
@@ -1119,6 +1124,103 @@
     };
   }
 
+
+  // ---------- Prüfhinweise: typische Eingabefehler erkennen ----------
+  // lvl: "warn" = wahrscheinlich falsch, "info" = bitte prüfen. pid = betroffener Beleg (wird in der Zeile angezeigt)
+  function pruefen(r) {
+    const P = root.EFPosten, out = [], eur = API.eur, jahr = String(CUR.jahr), heute = API.today();
+    const add = (lvl, text, pid) => out.push({ lvl, text, pid });
+    const name = n => (r[`p${n}`].name || "Person " + n);
+    const has = (t, re) => re.test(String(t || ""));
+
+    // Kinderbetreuung
+    const kk = num(CUR.kitaKosten), ke = num(CUR.kitaEssen), kz = num(CUR.kitaZuschuss);
+    if (ke > kk && kk > 0) add("warn", `Kita: Das Essensgeld (${eur(ke)}) ist höher als die gesamten Kita-Kosten (${eur(kk)}). Bei „Kita-Kosten gesamt“ gehört Beitrag + Essen zusammen hinein.`);
+    if (kz > 0 && kz > kk) add("warn", `Kita: Der steuerfreie Arbeitgeberzuschuss (${eur(kz)}) ist höher als die Kita-Kosten (${eur(kk)}). Steuerfrei ist er nur bis zur Höhe der echten Kosten – prüfe, ob beide Werte für das ganze Jahr ${jahr} gelten. Bleibt er höher, ist der Rest eigentlich steuerpflichtiger Lohn (mit der Lohnabrechnung klären). Absetzbar bleibt dann 0 €.`);
+    else if (kz > 0 && kz >= kk - ke && kk > 0) add("info", `Kita: Der Arbeitgeberzuschuss deckt die Betreuungskosten schon ab – absetzbar sind 0 €. Trotzdem beides in WISO eintragen.`);
+    if (kk > 0 && !r.kinder) add("warn", "Kita-Kosten eingetragen, aber „Kinder“ steht auf 0 – ohne Kind werden sie nicht berücksichtigt.");
+
+    // Wege zur Arbeit / Homeoffice
+    [1, 2].forEach(n => {
+      const km = num(CUR[`p${n}_km`]), tage = num(CUR[`p${n}_tage`]), ho = num(CUR[`p${n}_hoTage`]), pr = r[`p${n}`];
+      if (km > 0 && !tage) add("warn", `${name(n)}: Weg zur Arbeit hat km, aber keine Arbeitstage – so zählt er 0 €.`);
+      if (tage > 0 && !km) add("warn", `${name(n)}: Arbeitstage ohne km eingetragen – bitte die einfache Strecke ergänzen.`);
+      if (tage > 230) add("warn", `${name(n)}: ${tage} Bürotage sind sehr viele. Bei 5 Tagen/Woche bleiben nach Urlaub und Feiertagen meist 210–230. Das Finanzamt fragt hier oft nach.`);
+      if (tage + ho > 260) add("warn", `${name(n)}: Bürotage + Homeoffice-Tage (${tage + ho}) sind mehr, als es Arbeitstage im Jahr gibt.`);
+      if (ho > 210) add("info", `${name(n)}: Für Homeoffice zählen höchstens 210 Tage (1.260 €).`);
+      if (km > 100) add("info", `${name(n)}: ${km} km einfache Strecke – bitte prüfen, ob nicht Hin- und Rückweg zusammen eingetragen wurde. Es zählt nur die einfache Strecke.`);
+      if (!pr.brutto && (pr.fahrt || r.ps.wk[n])) add("warn", `${name(n)}: Werbungskosten ohne Bruttolohn – Werbungskosten gibt es nur zu einem Arbeitslohn.`);
+    });
+
+    // Einzelne Belege
+    const kontoJe = {};
+    (CUR.posten || []).forEach(x => {
+      const k = P && P.KAT[x.kat];
+      if (!k) return;
+      const t = x.text || "", b = num(x.betrag), wer = x.fuer === "firma" ? "Firma" : x.fuer === "2" ? name(2) : x.fuer === "1" ? name(1) : "";
+      if (!b) { add("info", `„${t || k.titel}“ hat noch keinen Betrag.`, x.id); return; }
+      if (k.typ === "geraet") {
+        const d = String(x.datum || ""), kj = d.slice(0, 4);
+        const istComputer = has(t, /laptop|notebook|pc\b|computer|monitor|bildschirm|drucker|tablet|ipad|software|tastatur|maus|headset|docking/i);
+        const sofort = x.art === "computer" || b <= (x.fuer === "firma" ? P.GWG_FIRMA : P.GWG_PRIVAT);
+        if (d && kj < jahr && (sofort || istComputer))
+          add("warn", `„${t}“ wurde ${kj} gekauft. ${istComputer ? "Computer und Software" : "Geräte bis 952 €"} zählen nur im Kaufjahr voll – das gehört in die Erklärung ${kj}, für ${jahr} sind es 0 €.`, x.id);
+        else if (d && kj < jahr) add("info", `„${t}“ wurde ${kj} gekauft – für ${jahr} zählt nur die Jahres-Abschreibung.`, x.id);
+        if (d > heute) add("warn", `„${t}“: Das Kaufdatum liegt in der Zukunft.`, x.id);
+        if (d && kj > jahr && d <= heute) add("warn", `„${t}“ wurde erst ${kj} gekauft – das gehört in die Erklärung ${kj}.`, x.id);
+        if (d === heute && x.fuer !== "firma") add("info", `„${t}“: Kaufdatum ist das heutige Datum (Vorschlag der App) – bitte das echte Datum laut Rechnung eintragen.`, x.id);
+        if (istComputer && x.art !== "computer" && b > P.GWG_PRIVAT && kj === jahr)
+          add("warn", `„${t}“ ist Computer-Hardware/Software – stell „Art“ auf „Computer/Software“, dann zählt der volle Preis sofort statt über Jahre.`, x.id);
+        const anteil = x.anteil === "" || x.anteil == null ? 100 : num(x.anteil);
+        if (anteil >= 100 && x.fuer !== "firma" && has(t, /handy|smartphone|iphone|laptop|notebook|tablet|ipad|pc\b|computer|drucker|rucksack|tasche/i))
+          add("info", `„${t}“ zu 100 % beruflich? Wenn du es auch privat nutzt, einen realistischen Anteil eintragen (z. B. 50 %). Das Finanzamt akzeptiert bei Computern oft 50 % ohne Nachweis.`, x.id);
+        if (anteil > 100) add("warn", `„${t}“: Der berufliche Anteil kann nicht über 100 % liegen.`, x.id);
+      }
+      if (x.kat === "telefon" && has(t, /cloud|ki\b|ai\b|gpt|claude|copilot|abo|software|adobe|microsoft|office|365|lizenz|github|domain|hosting|wix/i))
+        add("warn", `„${t}“ ist kein Telefon/Internet, sondern Software oder ein Abo – dafür gilt die 20-%-Pauschale nicht. Unter „Arbeitsmittel → Software“ mit echtem Anteil eintragen, oder bei „Firma“, wenn du es fürs Gewerbe nutzt.`, x.id);
+      if (x.kat === "telefon" && x.modus === "anteil" && num(x.anteil) > 50) add("info", `„${t}“: Mehr als 50 % beruflich verlangt einen Einzelnachweis (z. B. Verbindungsnachweis über 3 Monate).`, x.id);
+      if (x.kat === "kleidung") add("info", `„${t}“ (${wer}): Nur typische Berufskleidung zählt (Sicherheitsschuhe, Kittel, Uniform mit Logo). Normale Kleidung wie Hemd, Hose oder Anzug lehnt das Finanzamt ab – auch wenn du sie nur im Büro trägst.`, x.id);
+      if (x.kat === "kontofuehrung") {
+        kontoJe[x.fuer] = (kontoJe[x.fuer] || 0) + 1;
+        if (b > 16) add("info", `„${t}“: Ohne Nachweis gibt es pauschal 16 €. Mehr nur mit Nachweis, dass das Konto beruflich genutzt wird.`, x.id);
+        if (x.fuer === "firma") add("info", "Die Kontoführungspauschale gibt es nur für Arbeitnehmer. Für die Firma die echten Gebühren des Geschäftskontos als Betriebsausgabe eintragen.", x.id);
+      }
+      if (x.kat === "haushaltsnah" && has(t, /müll|abfall|wasser|abwasser|grundsteuer|strom|heizkosten|versicherung/i))
+        add("warn", `„${t}“ zählt nicht als haushaltsnahe Dienstleistung (Müll, Wasser, Grundsteuer, Strom, Heizung, Versicherung). Nur Arbeiten wie Reinigung, Hausmeister, Gartenpflege, Winterdienst.`, x.id);
+      if (x.kat === "handwerker" && has(t, /material|ersatzteil|farbe|möbel|gerät/i))
+        add("warn", `„${t}“: Bei Handwerkern zählen nur Arbeits- und Fahrtkosten, kein Material.`, x.id);
+      if (x.kat === "versicherung" && has(t, /kasko|hausrat|rechtsschutz|gebäude|reise|handy/i))
+        add("warn", `„${t}“ ist nicht absetzbar (Kasko, Hausrat, Rechtsschutz, Gebäude, Reise sind Sachversicherungen). Absetzbar sind Haftpflicht, Unfall, Berufsunfähigkeit, Risikoleben.`, x.id);
+      if (x.kat === "spenden" && b > 300) add("info", `„${t}“: Über 300 € braucht das Finanzamt eine Zuwendungsbestätigung des Vereins.`, x.id);
+      if (x.kat === "krankheit" && has(t, /fitness|vitamin|nahrungsergänzung|kosmetik|sport/i)) add("warn", `„${t}“ zählt nicht als Krankheitskosten (nur ärztlich verordnet).`, x.id);
+    });
+    Object.keys(kontoJe).forEach(f => { if (kontoJe[f] > 1 && f !== "firma") add("warn", `Kontoführung ist für ${f === "2" ? name(2) : name(1)} ${kontoJe[f]}-mal eingetragen – die Pauschale gibt es nur einmal pro Person.`); });
+
+    // Krankheitskosten unter der zumutbaren Belastung
+    if (r.ab && r.ab.agbSumme > 0 && !r.ab.agb) add("info", `Krankheitskosten (${eur(r.ab.agbSumme)}) liegen unter eurer zumutbaren Belastung (${eur(r.ab.zumutbareBelastung)}) – sie wirken sich nicht aus. Eintragen schadet aber nicht.`);
+
+    // Firma / Gewerbe
+    if (r.einnahmen > 0) {
+      const inh = API.S.firmen && (API.S.firmen.find(f => f.key === CUR.quelle) || {}).d;
+      const inhName = String((inh && inh.Inhaber) || "").toLowerCase();
+      const pn = n => String(r[`p${n}`].name || "").toLowerCase();
+      const andere = r.inhaber === 1 ? 2 : 1;
+      if (inhName && pn(andere) && inhName.includes(pn(andere)) && !inhName.includes(pn(r.inhaber)))
+        add("warn", `Einzelunternehmen: In den Firmendaten steht als Inhaber „${inh.Inhaber}“, hier ist aber ${name(r.inhaber)} eingetragen. Bitte „Inhaber“ prüfen.`);
+      if (r.inhaber === 1 && !inhName) add("info", `Einzelunternehmen: Inhaber ist ${name(1)}. Läuft die Firma auf ${name(2)}, unten unter „Einzelunternehmen“ auf Person 2 umstellen – dann gehören Anlage G und EÜR zu ${name(2)}.`);
+    }
+    if (r.gewinn < 0) add("info", `Die Firma macht ${eur(-r.gewinn)} Verlust. Das ist erlaubt, aber dauerhafte Verluste prüft das Finanzamt (Liebhaberei).`);
+    return out;
+  }
+
+  function pruefHtml(liste) {
+    if (!liste.length) return "";
+    const esc = API.esc, w = liste.filter(x => x.lvl === "warn").length, i = liste.length - w;
+    return `<div class="card pruefbox" id="pruefCard"><h3>⚠️ Prüfhinweise ${w ? `<span class="badge b-ueberfaellig">${w} wahrscheinlich falsch</span>` : ""} ${i ? `<span class="badge">${i} bitte prüfen</span>` : ""}</h3>
+      <ul class="pruefliste">${liste.map(x => `<li class="p-${x.lvl}"><span class="pi">${x.lvl === "warn" ? "!" : "i"}</span><span>${esc(x.text)}</span></li>`).join("")}</ul>
+      <p class="small muted">Die App prüft typische Fehler. Hinweise bei einzelnen Belegen stehen auch direkt in der Zeile unter „Steuererklärung – Ausgaben &amp; Belege“.</p></div>`;
+  }
+
   // ---------- Ergebnisse ----------
   function renderRes() {
     const api = API, eur = api.eur, esc = api.esc;
@@ -1138,7 +1240,9 @@
     const ICON = { ok: "✓", warn: "!", crit: "!", info: "i" };
     const aktKombi = r.kombis.find(k => k.aktuell);
 
+    const pruef = pruefen(r);
     $("#fiRes").innerHTML = `
+      ${pruefHtml(pruef)}
       ${r.exakt ? "" : `<div class="card warnbox">Für ${esc(CUR.jahr)} sind noch keine Steuerwerte hinterlegt – gerechnet wird mit den Werten von ${r.basisJahr}.</div>`}
       <div class="kpis">
         <div class="kpi"><div class="l">Brutto Haushalt</div><div class="v">${eur(r.bruttoGesamt)}</div><div class="s">Löhne + Gewinn</div></div>
