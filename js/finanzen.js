@@ -505,13 +505,18 @@
     const bib = api.esc(api.G.privatBibliothek());
     const z = ZUGRIFF;
     const berechtigte = api.S.benutzer.filter(b => b.Aktiv !== "Nein" && (b.Rolle === "Administrator" || b.Finanzen === "Ja"));
-    const hat = email => z && z.personen.some(p => p.email && p.email === String(email || "").toLowerCase());
+    // Treffer über Entra-ID, E-Mail oder Anmeldename (z. B. wenn jemand mehrere Adressen/Domains hat)
+    const hat = b => {
+      if (!z) return false;
+      const id = String(b.EntraId || "").toLowerCase(), mail = String(b.Title || "").toLowerCase();
+      return z.personen.some(p => (id && p.id === id) || (mail && (p.email === mail || p.login.endsWith("|" + mail))));
+    };
     return `<div class="card" id="fgCard"><h3>🔒 Zugriff &amp; Schutz</h3>
       ${!z ? `<p class="small muted">Die Bibliothek ${bib} wird beim ersten Speichern angelegt. Danach erscheinen hier die Schritte zum Schützen.</p>` : `
       <div class="tblwrap"><table class="tbl fitbl"><thead><tr><th>Wer</th><th>Zugriff auf ${bib}</th></tr></thead><tbody>
         ${z.offen.map(g => `<tr><td>${api.esc(g.name)} <span class="small muted">(Gruppe)</span></td><td class="neg">offen – entfernen</td></tr>`).join("")}
         ${berechtigte.map(b => `<tr><td>${api.esc(b.Name)} <span class="small muted">${api.esc(b.Title)}</span></td>
-          <td class="${hat(b.Title) || z.offen.length ? "pos" : "neg"}">${hat(b.Title) ? "✓ direkt berechtigt" : z.offen.length ? "über Gruppe" : "fehlt – hinzufügen"}</td></tr>`).join("")}
+          <td class="${hat(b) || z.offen.length ? "pos" : "neg"}">${hat(b) ? "✓ direkt berechtigt" : z.offen.length ? "über Gruppe" : "fehlt – hinzufügen"}</td></tr>`).join("")}
       </tbody></table></div>
       <p class="small"><strong>Einmalig in SharePoint einrichten</strong> (Seite → Zahnrad → <em>Websiteinhalte</em> → ${bib} → Zahnrad → <em>Bibliothekseinstellungen</em> → <em>Berechtigungen für diese Dokumentbibliothek</em>):</p>
       <ol class="small steps">
