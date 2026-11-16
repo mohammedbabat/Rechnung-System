@@ -126,7 +126,7 @@
     const rv = 0.093 * rvBasis, av = 0.013 * rvBasis;
     const kv = (0.073 + 0.0145) * kvBasis;              // allg. Beitrag + ½ durchschnittl. Zusatzbeitrag
     const pv = (kinderlos ? 0.024 : 0.018) * kvBasis;
-    return { gesamt: rv + av + kv + pv, abziehbar: rv + kv * 0.96 + pv };
+    return { gesamt: rv + av + kv + pv, abziehbar: rv + kv * 0.96 + pv, kvpv: kv * 0.96 + pv, av };
   }
 
   function person(pi, p, kinderlos) {
@@ -136,12 +136,14 @@
     const kl = klasseImMonat(ps, 12);                     // aktuelle Klasse (Dezember)
     const wechsel = new Set(ps.map(x => x.kl)).size > 1;
     const fahrt = entfernung(pi.km, pi.tage, pi.jahr), ho = Math.min(HO_MAX, Math.max(0, Math.floor(num(pi.hoTage))) * HO_TAG);
-    const wkEinzeln = r2(fahrt + ho + Math.max(0, num(pi.wk)));
+    const wkBelege = Math.max(0, num(pi.wkBelege));
+    const wkEinzeln = r2(fahrt + ho + Math.max(0, num(pi.wk)) + wkBelege);
     const wk = brutto > 0 ? Math.min(brutto, Math.max(ANP, wkEinzeln)) : 0;
     const s = svSchaetzung(brutto, p, kinderlos);
     const svGeschaetzt = leer(pi.sv);
     const svGes = svGeschaetzt ? s.gesamt : Math.max(0, num(pi.sv));
     const svAbz = s.gesamt > 0 ? svGes * (s.abziehbar / s.gesamt) : 0;
+    const svKvpv = s.gesamt > 0 ? svGes * (s.kvpv / s.gesamt) : 0, svAv = s.gesamt > 0 ? svGes * (s.av / s.gesamt) : 0;
     const vors1 = svSchaetzung(b1, p, kinderlos).abziehbar, vors2 = svSchaetzung(b2, p, kinderlos).abziehbar;
     const lst1Geschaetzt = leer(pi.lst) && b1 > 0;
     // geschätzte Lohnsteuer: jeder Monat mit seiner Klasse (Jahreswert der Klasse ÷ 12)
@@ -151,23 +153,24 @@
     const lst1 = leer(pi.lst) ? lstNachKlassen() : Math.max(0, num(pi.lst));
     const lst2Geschaetzt = leer(pi.lst2) && b2 > 0;
     const lst2 = b2 <= 0 ? 0 : (leer(pi.lst2) ? lohnsteuer(b2, "6", p, vors2) : Math.max(0, num(pi.lst2)));
-    return { name: pi.name, kl, perioden: ps, wechsel, klassenText: periodenText(ps), b1, b2, brutto, wk, wkPauschal: wkEinzeln < ANP, wkEinzeln, fahrt, ho, wkSonst: Math.max(0, num(pi.wk)), einkuenfte: brutto - wk,
-             svGes, svAbz, svGeschaetzt, vors1, lst1, lst2, lst: lst1 + lst2, lstGeschaetzt: lst1Geschaetzt || lst2Geschaetzt };
+    return { name: pi.name, kl, perioden: ps, wechsel, klassenText: periodenText(ps), b1, b2, brutto, wk, wkPauschal: wkEinzeln < ANP, wkEinzeln, fahrt, ho, wkBelege, wkSonst: Math.max(0, num(pi.wk)), einkuenfte: brutto - wk,
+             svGes, svAbz, svKvpv, svAv, svGeschaetzt, vors1, lst1, lst2, lst: lst1 + lst2, lstGeschaetzt: lst1Geschaetzt || lst2Geschaetzt };
   }
 
   // Festsetzung inkl. Günstigerprüfung Kindergeld/Kinderfreibetrag, § 35-Anrechnung, Soli, KiSt
-  function festsetzung({ zvE, kfb, kgJahr, tarifFn, messbetrag, gewst, soliFG, kistSatz, kistFaktor }) {
+  function festsetzung({ zvE, kfb, kgJahr, tarifFn, messbetrag, gewst, soliFG, kistSatz, kistFaktor, erm = 0 }) {
     const estOhne = tarifFn(zvE);
     const estMit = tarifFn(Math.max(0, zvE - kfb));
     const kfbGuenstiger = kfb > 0 && (estOhne - estMit) > kgJahr;
     const tariflich = kfbGuenstiger ? estMit : estOhne;
     const anr = Math.min(ANRECHNUNG_35 * messbetrag, gewst, tariflich);
     const hinzu = kfbGuenstiger ? kgJahr : 0;
-    const est = Math.max(0, tariflich - anr) + hinzu;
-    const zuschlagBasis = Math.max(0, estMit - Math.min(anr, estMit));   // Soli/KiSt immer mit Kinderfreibetrag
+    const e35a = Math.min(erm, Math.max(0, tariflich - anr));            // § 35a: haushaltsnahe Dienstleistungen / Handwerker
+    const est = Math.max(0, tariflich - anr - e35a) + hinzu;
+    const zuschlagBasis = Math.max(0, estMit - Math.min(anr + erm, estMit));   // Soli/KiSt immer mit Kinderfreibetrag
     const sz = soli(zuschlagBasis, soliFG);
     const kist = r2(zuschlagBasis * kistSatz / 100 * kistFaktor);
-    return { zvE, estOhne, estMit, kfbGuenstiger, tariflich, anr, hinzu, est, zuschlagBasis, soli: sz, kist,
+    return { zvE, estOhne, estMit, kfbGuenstiger, tariflich, anr, e35a, hinzu, est, zuschlagBasis, soli: sz, kist,
              summe: r2(est + sz + kist) };
   }
 
@@ -184,13 +187,14 @@
     const { p, basisJahr, exakt } = paramFor(i.jahr);
     const kinder = Math.max(0, Math.floor(num(i.kinder)));
     const kinderlos = kinder === 0;
-    const pp = n => person({ name: i[`p${n}_name`], stkl: i[`p${n}_stkl`], perioden: perioden(i, n), brutto: i[`p${n}_brutto`], wk: i[`p${n}_wk`], km: i[`p${n}_km`], tage: i[`p${n}_tage`], hoTage: i[`p${n}_hoTage`], jahr: i.jahr, sv: i[`p${n}_sv`],
+    const P = root.EFPosten, ps = P ? P.summen(i.posten, i.jahr) : { wk: { 1: 0, 2: 0 }, wkKat: { 1: {}, 2: {} }, firma: 0, firmaKat: {}, kat: {}, anzahl: 0 };
+    const pp = n => person({ name: i[`p${n}_name`], wkBelege: ps.wk[n], stkl: i[`p${n}_stkl`], perioden: perioden(i, n), brutto: i[`p${n}_brutto`], wk: i[`p${n}_wk`], km: i[`p${n}_km`], tage: i[`p${n}_tage`], hoTage: i[`p${n}_hoTage`], jahr: i.jahr, sv: i[`p${n}_sv`],
       lst: i[`p${n}_lst`], brutto2: i[`p${n}_brutto2`], lst2: i[`p${n}_lst2`] }, p, kinderlos);
     const p1 = pp(1), p2 = pp(2);
     const inhaber = i.inhaber === "2" ? 2 : 1;
 
     const einnahmen = r2((i.quelle === "manuell" ? 0 : num(einnahmenAuto)) + num(i.einnahmenManuell));
-    const ausgaben = Math.max(0, num(i.ausgaben));
+    const ausgaben = r2(Math.max(0, num(i.ausgaben)) + ps.firma);
     const gewinn = r2(einnahmen - ausgaben);
     const gw = gewerbe(gewinn, i.hebesatz);
     const kistSatz = num(i.kistSatz) || 9;
@@ -203,20 +207,23 @@
     const kitaZuschuss = Math.max(0, num(i.kitaZuschuss));
     const kitaBasis = r2(Math.max(0, kitaKosten - kitaEssen - kitaZuschuss));
     const betreuung = r2(Math.min(kinder * 4800, 0.8 * kitaBasis));
-    const weitere = r2(weitere0 + betreuung);
     const kgJahr = kinder * p.kg * 12;
 
     // Zusammenveranlagung
     const gde = p1.einkuenfte + p2.einkuenfte + gewinn;
+    const ab = P ? P.abzuege(ps, { gde, kinder, kvpv: p1.svKvpv + p2.svKvpv, av: p1.svAv + p2.svAv })
+      : { sonderausgaben: 0, agb: 0, ermaessigung: 0 };
+    const weitere = r2(weitere0 + betreuung + ab.sonderausgaben + ab.agb);
+    const erm = ab.ermaessigung;
     const vorsorge = p1.svAbz + p2.svAbz;
     const zvE = Math.max(0, Math.floor(gde - vorsorge - 2 * SAP - weitere));
     const zus = festsetzung({ zvE, kfb: kinder * p.kfb, kgJahr, tarifFn: x => splitting(x, p),
-      messbetrag: gw.messbetrag, gewst: gw.gewst, soliFG: 2 * p.soliFG, kistSatz, kistFaktor });
+      messbetrag: gw.messbetrag, gewst: gw.gewst, soliFG: 2 * p.soliFG, kistSatz, kistFaktor, erm });
 
     // Zum Vergleich: ohne Unternehmen (Steuerlast, die auf das Unternehmen entfällt)
     const zvEOhne = Math.max(0, Math.floor(p1.einkuenfte + p2.einkuenfte - vorsorge - 2 * SAP - weitere));
     const ohneU = festsetzung({ zvE: zvEOhne, kfb: kinder * p.kfb, kgJahr, tarifFn: x => splitting(x, p),
-      messbetrag: 0, gewst: 0, soliFG: 2 * p.soliFG, kistSatz, kistFaktor });
+      messbetrag: 0, gewst: 0, soliFG: 2 * p.soliFG, kistSatz, kistFaktor, erm });
     const estUnternehmen = r2(zus.summe - ohneU.summe);
     const steuerUnternehmen = r2(estUnternehmen + gw.gewst);
 
@@ -226,7 +233,7 @@
       const gwi = inhaber === idx + 1 ? gw : { messbetrag: 0, gewst: 0 };
       const z = Math.max(0, Math.floor(pr.einkuenfte + g - pr.svAbz - SAP - weitere / 2));
       return festsetzung({ zvE: z, kfb: kinder * p.kfb / 2, kgJahr: kgJahr / 2, tarifFn: x => tarif(x, p),
-        messbetrag: gwi.messbetrag, gewst: gwi.gewst, soliFG: p.soliFG, kistSatz, kistFaktor });
+        messbetrag: gwi.messbetrag, gewst: gwi.gewst, soliFG: p.soliFG, kistSatz, kistFaktor, erm: erm / 2 });
     });
     const summeEinzeln = r2(einzeln[0].summe + einzeln[1].summe);
 
@@ -247,7 +254,7 @@
 
     return { p, basisJahr, exakt, kinder, kgJahr, p1, p2, inhaber, einnahmen, ausgaben, gewinn, gw, gde, vorsorge,
              zvE, zus, ohneU, estUnternehmen, steuerUnternehmen, einzeln, summeEinzeln, splittingVorteil: r2(summeEinzeln - zus.summe),
-             kombis, faktor, gezahlt, ergebnis, bruttoGesamt, netto, grenz, durchschnitt, weitere, weitere0, betreuung, kitaKosten, kitaEssen, kitaZuschuss, kitaBasis, kistFaktor, kistSatz };
+             kombis, faktor, gezahlt, ergebnis, bruttoGesamt, netto, grenz, durchschnitt, weitere, weitere0, betreuung, kitaKosten, kitaEssen, kitaZuschuss, kitaBasis, kistFaktor, kistSatz, ps, ab };
   }
 
   // Berechnung mit einem anderen Gewinn (für Grafik und Schwellen)
@@ -268,7 +275,7 @@
     p1_name: "Mohammed", p1_stkl: "4", p1_perioden: [], p1_abr: [], p1_brutto: "", p1_wk: "", p1_km: "", p1_tage: "", p1_hoTage: "", p1_sv: "", p1_lst: "", p1_brutto2: "", p1_lst2: "",
     p2_name: "Ehefrau", p2_stkl: "4", p2_perioden: [], p2_abr: [], p2_brutto: "", p2_wk: "", p2_km: "", p2_tage: "", p2_hoTage: "", p2_sv: "", p2_lst: "", p2_brutto2: "", p2_lst2: "",
     inhaber: "1", quelle: "ef", einnahmenManuell: "", ausgaben: "", hebesatz: 500,
-    vorauszahlungen: "", weitereAbzuege: "", kitaKosten: "", kitaEssen: "", kitaZuschuss: ""
+    vorauszahlungen: "", weitereAbzuege: "", kitaKosten: "", kitaEssen: "", kitaZuschuss: "", posten: []
   };
   const LOCAL_KEY = "ef_finanzen_lokal";
   const FARBE = { netto: "#7B2FBE", sv: "#A898C8", est: "#F97316", gewst: "#DB2777", grenze: "#DC2626", hilf: "#94A3B8" };
@@ -342,6 +349,13 @@
     const heute = api.today().slice(0, 4);
     const jahr = sub && /^\d{4}$/.test(sub) ? sub : (CUR && CUR.jahr) || heute;
     CUR = Object.assign({}, DEFAULT, STORE.jahre[jahr] || {}, { jahr });
+    CUR.posten = Array.isArray(CUR.posten) ? CUR.posten.map(x => Object.assign({}, x)) : [];
+    [1, 2].forEach(n => {                   // altes Sammelfeld "Sonstige Werbungskosten" in die Belegliste übernehmen
+      if (num(CUR[`p${n}_wk`]) > 0) {
+        CUR.posten.push({ id: neueId(), kat: "sonstigeWK", fuer: String(n), text: "Übernommen aus „Sonstige Werbungskosten“", betrag: num(CUR[`p${n}_wk`]) });
+        CUR[`p${n}_wk`] = "";
+      }
+    });
     const jahre = [];
     for (let y = Math.min(2025, Number(heute) - 1); y <= Number(heute) + 1; y++) jahre.push(String(y));
     Object.keys(STORE.jahre).forEach(y => { if (!jahre.includes(y)) jahre.push(y); });
@@ -380,7 +394,6 @@
           ${feld(`p${n}_km`, "Weg zur Arbeit km (einfache Strecke)", { ph: "0" })}
           ${feld(`p${n}_tage`, "Arbeitstage im Büro/Jahr (mit Auto/Bus/Rad)", { ph: "0" })}
           ${feld(`p${n}_hoTage`, "Homeoffice-Tage im Jahr", { ph: "0" })}
-          ${feld(`p${n}_wk`, "Sonstige Werbungskosten € (Arbeitsmittel, Handy, Kontoführung …)", { ph: "0" })}
           ${feld(`p${n}_brutto2`, "Brutto 2. Arbeitgeber € (z. B. früherer Job)", { ph: "0" })}
           ${feld(`p${n}_lst2`, "Lohnsteuer 2. Arbeitgeber € (leer = Klasse 6 geschätzt)", { ph: "automatisch" })}
         </div>${abrListeHtml(n)}<p class="small muted">Werte stehen auf der Lohnsteuerbescheinigung bzw. in den Jahreswerten der Gehaltsabrechnung. Minijobs mit Pauschalsteuer nicht eintragen.</p></div>`).join("")}
@@ -391,10 +404,12 @@
         ${feld("quelle", "Einnahmen aus der App", { options: firmen.concat([["manuell", "nicht übernehmen (nur manuell)"]]) })}
         <label>Einnahmen aus der App €<input id="fiAuto" disabled></label>
         ${feld("einnahmenManuell", "Weitere Einnahmen € (manuell)")}
-        ${feld("ausgaben", "Betriebsausgaben € (Hardware, Software, Fahrten …)")}
+        ${feld("ausgaben", "Weitere Betriebsausgaben € (ohne Belegliste)")}
         ${feld("hebesatz", "Gewerbesteuer-Hebesatz % (Bergheim 500)")}
         ${feld("vorauszahlungen", "ESt-Vorauszahlungen ans Finanzamt €")}
       </div><p class="small muted" id="fiAutoInfo"></p></div>
+
+      <div class="card" id="stCard">${postenHtml()}</div>
 
       <div id="fiRes"></div>
       ${istAdmin(api) ? zugriffHtml(api) : ""}`);
@@ -410,6 +425,7 @@
     document.querySelectorAll("[data-k]").forEach(el => { el.oninput = onChange; el.onchange = onChange; });
     document.querySelectorAll("[data-hoch]").forEach(b => { b.onclick = () => hochrechnenDialog(Number(b.dataset.hoch)); });
     bindPerioden(jahr);
+    bindPosten();
     $("#fiJahr").onchange = e => { location.hash = "#/finanzen/" + e.target.value; };
     $("#fiSave").onclick = speichern;
     document.querySelectorAll("[data-adel]").forEach(b => { b.onclick = () => {
@@ -418,6 +434,125 @@
       abrAnwenden(n); neuZeichnen();
     }; });
     renderRes();
+  }
+
+
+  // ---------- Steuererklärung: Ausgaben & Belege ----------
+  const OFFEN = new Set(["wk"]);
+  const neueId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  function postenSpeichernLokal() { STORE.jahre[CUR.jahr] = Object.assign({}, CUR); $("#fiSave").textContent = "Speichern *"; }
+  const fuerName = f => f === "firma" ? "Firma" : f === "2" ? (CUR.p2_name || "Person 2") : (CUR.p1_name || "Person 1");
+
+  function postenHtml() {
+    const P = root.EFPosten, esc = API.esc, eur = API.eur;
+    if (!P) return `<p class="small muted">Belegliste nicht geladen (js/steuerposten.js fehlt).</p>`;
+    const r = berechne(CUR, 0), ab = r.ab;
+    const gruppenWert = {
+      wk: r2(r.ps.wk[1] + r.ps.wk[2] + r.ps.firma),
+      sa: r2(ab.sonderausgaben || 0), agb: r2(ab.agb || 0), hh: r2(ab.ermaessigung || 0)
+    };
+    const gruppenInfo = {
+      wk: `${esc(fuerName("1"))} ${eur(r.ps.wk[1])} · ${esc(fuerName("2"))} ${eur(r.ps.wk[2])}${r.ps.firma ? ` · Firma ${eur(r.ps.firma)}` : ""}`,
+      sa: "abziehbar nach Höchstbeträgen",
+      agb: ab.agbSumme ? `Kosten ${eur(ab.agbSumme)} − zumutbare Belastung ${eur(ab.zumutbareBelastung)}` : "über der zumutbaren Belastung",
+      hh: "geht direkt von der Steuer ab (20 %)"
+    };
+    return `<div class="row between"><h3>📋 Steuererklärung – Ausgaben &amp; Belege ${esc(CUR.jahr)}</h3>
+        <span class="small muted">${r.ps.anzahl} Einträge</span></div>
+      <p class="small muted">Wie in einer Steuer-App: Bereich öffnen, auf einen Vorschlag tippen oder „+ Eigener Eintrag“, Betrag eintragen. Alles fließt automatisch in die Berechnung unten.
+        Belege (Rechnungen, Kontoauszüge) aufbewahren – das Finanzamt kann sie anfordern.</p>
+      ${P.GRUPPEN.map(g => `<details class="stgr" data-gr="${g.key}" ${OFFEN.has(g.key) ? "open" : ""}>
+        <summary><span class="sticon">${g.icon}</span><span class="grow"><strong>${g.titel}</strong><span class="small muted"> · ${g.sub}</span>
+          <span class="small muted stinfo" data-ginfo="${g.key}">${gruppenInfo[g.key]}</span></span>
+          <strong class="stsum" data-gsum="${g.key}">${g.key === "hh" ? "−" : ""}${eur(gruppenWert[g.key])}</strong></summary>
+        ${P.KATS.filter(k => k.gruppe === g.key).map(k => katHtml(k)).join("")}
+      </details>`).join("")}`;
+  }
+
+  function katHtml(k) {
+    const P = root.EFPosten, esc = API.esc, eur = API.eur;
+    const liste = CUR.posten.filter(x => x.kat === k.key);
+    const summe = r2(liste.reduce((a, x) => a + P.wert(x, CUR.jahr).wert, 0));
+    const fuerOpts = x => `<select data-pf="fuer" aria-label="Für wen">${[["1", fuerName("1")], ["2", fuerName("2")], ["firma", "Firma (Betriebsausgabe)"]]
+      .map(([v, t]) => `<option value="${v}" ${String(x.fuer) === v ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+    const inp = (x, f, ph, typ = "number", extra = "") => `<input data-pf="${f}" type="${typ}" ${typ === "number" ? 'step="0.01" inputmode="decimal"' : ""} value="${esc(x[f] ?? "")}" placeholder="${esc(ph)}" aria-label="${esc(ph)}" ${extra}>`;
+    const zeile = x => {
+      const w = P.wert(x, CUR.jahr);
+      let felder = "";
+      if (k.typ === "geraet") {
+        const teuer = num(x.betrag) > (x.fuer === "firma" ? P.GWG_FIRMA : P.GWG_PRIVAT) && x.art !== "computer";
+        felder = `${inp(x, "datum", "Kaufdatum", "date")}${inp(x, "betrag", "Preis brutto €")}${inp(x, "anteil", "beruflich %", "number", 'min="0" max="100"')}
+          <select data-pf="art" aria-label="Art"><option value="computer" ${x.art === "computer" ? "selected" : ""}>Computer/Software</option><option value="normal" ${x.art !== "computer" ? "selected" : ""}>anderes Gerät</option></select>
+          ${teuer ? inp(x, "nd", "Nutzungsdauer Jahre") : "<span></span>"}`;
+      } else if (k.typ === "monat") {
+        felder = `${inp(x, "betrag", "€ pro Monat")}${inp(x, "monate", "Monate", "number", 'min="0" max="12"')}
+          <select data-pf="modus" aria-label="Abrechnung"><option value="pauschal" ${x.modus !== "anteil" ? "selected" : ""}>Pauschal 20 % (max. 20 €)</option><option value="anteil" ${x.modus === "anteil" ? "selected" : ""}>Eigener Anteil %</option></select>
+          ${x.modus === "anteil" ? inp(x, "anteil", "beruflich %") : "<span></span>"}`;
+      } else felder = inp(x, "betrag", "Betrag €");
+      return `<div class="strow st-${k.typ}${k.fuer === "haus" ? " st-haus" : ""}" data-pid="${esc(x.id)}">
+        ${inp(x, "text", "Bezeichnung", "text", 'class="sttext"')}${k.fuer === "person" ? fuerOpts(x) : ""}${felder}
+        <span class="stwert" data-wert="${esc(x.id)}" title="${esc(w.info)}">${eur(w.wert)}${w.info ? `<span class="small muted">${esc(w.info)}</span>` : ""}</span>
+        <button type="button" class="icon" data-pdel title="Eintrag entfernen">✕</button></div>`;
+    };
+    return `<div class="stkat"><div class="row between"><strong>${esc(k.titel)}</strong><span class="small" data-ksum="${k.key}">${summe ? eur(summe) : ""}</span></div>
+      <p class="small muted">${esc(k.hilfe)}</p>
+      ${liste.length ? kopfHtml(k) : ""}${liste.map(zeile).join("")}
+      <div class="chips">${k.presets.map((pr, j) => `<button type="button" class="chip" data-sadd="${k.key}:${j}">${esc(pr[0])}</button>`).join("")}
+        <button type="button" class="chip ghost" data-sadd="${k.key}:-1">+ Eigener Eintrag</button></div></div>`;
+  }
+
+  function kopfHtml(k) {
+    const sp = k.typ === "geraet" ? ["Bezeichnung", "Für", "Kaufdatum", "Preis brutto €", "beruflich %", "Art", "Jahre", "absetzbar"]
+      : k.typ === "monat" ? ["Bezeichnung", "Für", "€ pro Monat", "Monate", "Abrechnung", "Anteil %", "absetzbar"]
+      : k.fuer === "haus" ? ["Bezeichnung", "Betrag €", "absetzbar"] : ["Bezeichnung", "Für", "Betrag €", "absetzbar"];
+    return `<div class="strow stkopf st-${k.typ}${k.fuer === "haus" ? " st-haus" : ""}">${sp.map((t, j) => `<span${j === sp.length - 1 ? ' class="r"' : ""}>${t}</span>`).join("")}<span></span></div>`;
+  }
+
+  function postenNeu() {
+    const y = window.scrollY, card = $("#stCard");
+    if (!card) return;
+    card.innerHTML = postenHtml(); bindPosten(); renderRes(); window.scrollTo(0, y);
+  }
+
+  function bindPosten() {
+    const P = root.EFPosten, card = $("#stCard");
+    if (!P || !card) return;
+    card.querySelectorAll("details.stgr").forEach(d => { d.ontoggle = () => { if (d.open) OFFEN.add(d.dataset.gr); else OFFEN.delete(d.dataset.gr); }; });
+    card.querySelectorAll("[data-sadd]").forEach(b => { b.onclick = () => {
+      const [kat, j] = b.dataset.sadd.split(":"), k = P.KAT[kat], pr = Number(j) >= 0 ? k.presets[Number(j)] : null;
+      const x = { id: neueId(), kat, text: pr ? pr[1] : "", betrag: pr && pr[4] != null ? pr[4] : "" };
+      if (k.fuer === "person") x.fuer = "1"; else x.fuer = "haus";
+      if (k.typ === "geraet") { x.art = pr && pr[2] === "computer" ? "computer" : "normal"; x.anteil = 100; x.datum = CUR.jahr === API.today().slice(0, 4) ? API.today() : CUR.jahr + "-01-01"; if (pr && pr[3]) x.nd = pr[3]; }
+      if (k.typ === "monat") { x.monate = 12; x.modus = "pauschal"; }
+      CUR.posten.push(x); OFFEN.add(k.gruppe); postenSpeichernLokal(); postenNeu();
+      const neu = card.querySelector(`[data-pid="${x.id}"] [data-pf="${pr ? "betrag" : "text"}"]`);
+      if (neu) neu.focus();
+    }; });
+    card.querySelectorAll(".strow").forEach(row => {
+      const x = CUR.posten.find(p => p.id === row.dataset.pid);
+      if (!x) return;
+      row.querySelectorAll("[data-pf]").forEach(el => {
+        const f = el.dataset.pf;
+        el.oninput = () => {
+          x[f] = el.value; postenSpeichernLokal();
+          if (el.tagName === "SELECT") return;                                  // Neuaufbau bei change
+          const w = P.wert(x, CUR.jahr), c = card.querySelector(`[data-wert="${x.id}"]`);
+          if (c) c.innerHTML = `${API.eur(w.wert)}${w.info ? `<span class="small muted">${API.esc(w.info)}</span>` : ""}`;
+          renderRes(); summenNeu();
+        };
+        el.onchange = () => { x[f] = el.value; postenSpeichernLokal(); if (el.tagName === "SELECT" || (P.KAT[x.kat].typ === "geraet" && (f === "betrag" || f === "datum"))) postenNeu(); };
+      });
+      const del = row.querySelector("[data-pdel]");
+      if (del) del.onclick = () => { CUR.posten = CUR.posten.filter(p => p !== x); postenSpeichernLokal(); postenNeu(); };
+    });
+  }
+
+  // Summen in den Überschriften aktualisieren, ohne das Formular neu aufzubauen (Fokus bleibt)
+  function summenNeu() {
+    const tmp = document.createElement("div"); tmp.innerHTML = postenHtml();
+    ["data-gsum", "data-ginfo", "data-ksum"].forEach(a => tmp.querySelectorAll(`[${a}]`).forEach(n => {
+      const ziel = document.querySelector(`#stCard [${a}="${n.getAttribute(a)}"]`); if (ziel) ziel.innerHTML = n.innerHTML;
+    }));
   }
 
   // ---------- Steuerklassen-Zeiträume (Editor) ----------
@@ -532,6 +667,7 @@
     const t = [];
     if (pr.fahrt) t.push(`Fahrten ${eur0(pr.fahrt)}`);
     if (pr.ho) t.push(`Homeoffice ${eur0(pr.ho)}`);
+    if (pr.wkBelege) t.push(`Belege ${eur0(pr.wkBelege)}`);
     if (pr.wkSonst) t.push(`Sonstige ${eur0(pr.wkSonst)}`);
     const summe = t.length ? t.join(" + ") : "";
     return pr.wkPauschal ? (summe ? `Pauschale 1.230 € (eigene Kosten nur ${summe} = ${eur0(pr.wkEinzeln)})` : "Pauschale") : summe;
@@ -812,6 +948,46 @@
     return out;
   }
 
+
+  // ---------- Übersicht für die Steuererklärung (ELSTER) ----------
+  function elsterHtml(r) {
+    const P = root.EFPosten, esc = API.esc, eur = API.eur;
+    if (!P) return "";
+    const k = key => r.ps.kat[key] || 0, zeilen = [];
+    const add = (anlage, was, wert, hinweis = "") => { if (wert) zeilen.push({ anlage, was, wert, hinweis }); };
+    [1, 2].forEach(n => {
+      const pr = r[`p${n}`], name = pr.name || "Person " + n, ki = r.ps.wkKat[n], an = `Anlage N – ${name}`;
+      if (pr.fahrt) add(an, "Wege zur Arbeit", eur(pr.fahrt), `${num(CUR[`p${n}_tage`])} Tage, ${num(CUR[`p${n}_km`])} km einfache Strecke`);
+      if (pr.ho) add(an, "Homeoffice-Pauschale", eur(pr.ho), `${num(CUR[`p${n}_hoTage`])} Tage`);
+      P.KATS.filter(x => x.gruppe === "wk").forEach(x => add(an, x.titel, ki[x.key] ? eur(ki[x.key]) : 0));
+      if (pr.brutto > 0) add(an, pr.wkPauschal ? "→ Arbeitnehmer-Pauschbetrag greift" : "→ Werbungskosten gesamt", eur(pr.wk),
+        pr.wkPauschal ? "eigene Kosten unter 1.230 € – trotzdem eintragen schadet nicht" : "");
+    });
+    if (num(CUR.kitaKosten)) add("Anlage Kind", "Kinderbetreuungskosten", eur(num(CUR.kitaKosten) - num(CUR.kitaEssen)), num(CUR.kitaZuschuss) ? `steuerfreier Arbeitgeberzuschuss ${eur(num(CUR.kitaZuschuss))} angeben` : "ohne Essensgeld");
+    add("Anlage Vorsorgeaufwand", "Haftpflicht-, Unfall-, BU-, Risikolebensversicherung", k("versicherung") ? eur(k("versicherung")) : 0);
+    add("Anlage Sonderausgaben", "Spenden & Mitgliedsbeiträge", k("spenden") ? eur(k("spenden")) : 0);
+    add("Anlage Kind", "Schulgeld", k("schulgeld") ? eur(k("schulgeld")) : 0);
+    add("Anlage Außergewöhnliche Belastungen", "Krankheitskosten", k("krankheit") ? eur(k("krankheit")) : 0);
+    add("Anlage Außergewöhnliche Belastungen", "Sonstige Belastungen", k("sonstigeAgb") ? eur(k("sonstigeAgb")) : 0);
+    add("Anlage Haushaltsnahe Aufwendungen", "Haushaltsnahe Dienstleistungen", k("haushaltsnah") ? eur(k("haushaltsnah")) : 0);
+    add("Anlage Haushaltsnahe Aufwendungen", "Handwerkerleistungen (Arbeitskosten)", k("handwerker") ? eur(k("handwerker")) : 0);
+    if (r.einnahmen || r.ausgaben) {
+      const inh = (r.inhaber === 2 ? r.p2 : r.p1).name || "Inhaber";
+      add(`Anlage EÜR / G – ${inh}`, "Betriebseinnahmen", eur(r.einnahmen));
+      Object.keys(r.ps.firmaKat).forEach(key => add(`Anlage EÜR / G – ${inh}`, "Betriebsausgaben: " + P.KAT[key].titel, eur(r.ps.firmaKat[key])));
+      if (num(CUR.ausgaben)) add(`Anlage EÜR / G – ${inh}`, "Weitere Betriebsausgaben", eur(num(CUR.ausgaben)));
+      add(`Anlage EÜR / G – ${inh}`, "→ Gewinn", eur(r.gewinn));
+    }
+    if (!zeilen.length) return "";
+    let letzte = "";
+    return `<div class="card"><h3>🧾 Übersicht für die Steuererklärung ${esc(CUR.jahr)}</h3>
+      <p class="small muted">Diese Werte trägst du in ELSTER (oder gibst sie dem Steuerberater) in die genannte Anlage ein.</p>
+      <div class="tblwrap"><table class="tbl fitbl"><tbody>
+      ${zeilen.map(z => { const kopf = z.anlage !== letzte ? `<tr class="sthead"><td colspan="2">${esc(z.anlage)}</td></tr>` : ""; letzte = z.anlage;
+        return kopf + `<tr><td>${esc(z.was)}${z.hinweis ? `<div class="small muted">${esc(z.hinweis)}</div>` : ""}</td><td class="r">${esc(z.wert)}</td></tr>`; }).join("")}
+      </tbody></table></div></div>`;
+  }
+
   // ---------- Ergebnisse ----------
   function renderRes() {
     const api = API, eur = api.eur, esc = api.esc;
@@ -886,15 +1062,18 @@
           ${zeile(`− Werbungskosten ${n1}`, eur(r.p1.wk), "", wkText(r.p1))}
           ${zeile(`Bruttolohn ${n2}`, eur(r.p2.brutto), "", r.p2.b2 ? `davon 2. Arbeitgeber ${eur(r.p2.b2)}` : "")}
           ${zeile(`− Werbungskosten ${n2}`, eur(r.p2.wk), "", wkText(r.p2))}
-          ${zeile("+ Gewinn Einzelunternehmen", eur(r.gewinn), "", `Einnahmen ${eur(r.einnahmen)} − Ausgaben ${eur(r.ausgaben)}`)}
+          ${zeile("+ Gewinn Einzelunternehmen", eur(r.gewinn), "", `Einnahmen ${eur(r.einnahmen)} − Ausgaben ${eur(r.ausgaben)}${r.ps.firma ? ` (davon Belege ${eur(r.ps.firma)})` : ""}`)}
           ${zeile("= Gesamtbetrag der Einkünfte", eur(r.gde), "sum")}
           ${zeile("− Vorsorgeaufwendungen", eur(r.vorsorge), "", (r.p1.svGeschaetzt || r.p2.svGeschaetzt) ? "Renten-, Kranken-, Pflegeversicherung (teilweise geschätzt)" : "Renten-, Kranken-, Pflegeversicherung")}
           ${zeile("− Sonderausgaben-Pauschbetrag", eur(2 * SAP))}
           ${r.betreuung ? zeile("− Kinderbetreuungskosten", eur(r.betreuung), "", `80 % von ${eur(r.kitaBasis)} (Kosten ${eur(r.kitaKosten)}${r.kitaEssen ? ` − Essen ${eur(r.kitaEssen)}` : ""}${r.kitaZuschuss ? ` − Arbeitgeberzuschuss ${eur(r.kitaZuschuss)}` : ""}), max. 4.800 € je Kind`) : ""}
+          ${r.ab.sonderausgaben ? zeile("− Sonderausgaben (Belege)", eur(r.ab.sonderausgaben), "", [r.ab.spenden ? `Spenden ${eur(r.ab.spenden)}` : "", r.ab.versicherungZusatz ? `Versicherungen ${eur(r.ab.versicherungZusatz)}` : "", r.ab.schulgeld ? `Schulgeld ${eur(r.ab.schulgeld)}` : ""].filter(Boolean).join(" · ")) : ""}
+          ${r.ab.agb ? zeile("− Außergewöhnliche Belastungen", eur(r.ab.agb), "", `Kosten ${eur(r.ab.agbSumme)} − zumutbare Belastung ${eur(r.ab.zumutbareBelastung)}`) : ""}
           ${r.weitere0 ? zeile("− Weitere Abzüge", eur(r.weitere0)) : ""}
           ${zeile("= Zu versteuerndes Einkommen", eur(r.zvE), "sum", z.kfbGuenstiger ? `abzgl. Kinderfreibetrag ${eur(r.kinder * r.p.kfb)} → ${eur(Math.max(0, r.zvE - r.kinder * r.p.kfb))}` : "")}
           ${zeile("Einkommensteuer (Splittingtarif)", eur(z.tariflich), "", r.kinder ? (z.kfbGuenstiger ? "Kinderfreibetrag ist günstiger als Kindergeld" : "Kindergeld ist günstiger als Kinderfreibetrag") : "")}
           ${z.anr ? zeile("− Anrechnung Gewerbesteuer (§ 35 EStG)", eur(z.anr)) : ""}
+          ${z.e35a ? zeile("− Haushaltsnahe Dienste & Handwerker (§ 35a)", eur(z.e35a), "", `20 % von ${[r.ab.haushaltsnah ? `Dienstleistungen` : "", r.ab.handwerker ? `Handwerker-Arbeitskosten` : ""].filter(Boolean).join(" und ")}`) : ""}
           ${z.hinzu ? zeile("+ Kindergeld (Hinzurechnung)", eur(z.hinzu)) : ""}
           ${zeile("= Festzusetzende Einkommensteuer", eur(z.est), "sum")}
           ${zeile("+ Solidaritätszuschlag", eur(z.soli), "", z.soli ? "" : `Freigrenze ${eur(2 * r.p.soliFG)} nicht überschritten`)}
@@ -924,8 +1103,9 @@
           </tbody></table></div></div>
         </div>
       </div>
+      ${elsterHtml(r)}
       <p class="small muted">Vereinfachte Schätzung nach § 32a EStG (${r.basisJahr}): Grundfreibetrag ${eur(r.p.gfb)}, Kinderfreibetrag ${eur(r.p.kfb)} je Kind, Soli-Freigrenze ${eur(2 * r.p.soliFG)} (zusammen).
-        Lohnsteuer-Schätzung vereinfacht nach Programmablaufplan (Vorsorgepauschale geschätzt). Nicht berücksichtigt u. a.: Riester, Unterhalt, Handwerkerleistungen,
+        Lohnsteuer-Schätzung vereinfacht nach Programmablaufplan (Vorsorgepauschale geschätzt). Nicht berücksichtigt u. a.: Riester/Rürup, Unterhalt, Behinderten-/Pflege-Pauschbeträge, doppelte Haushaltsführung,
         Progressionsvorbehalt (Elterngeld, Krankengeld, ALG), genaue Höchstbeträge der Vorsorgeaufwendungen. Für verbindliche Zahlen: Steuerberater oder Lohnsteuerhilfeverein.</p>`;
   }
 
