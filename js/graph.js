@@ -17,7 +17,7 @@
              ["BezugNr", "text"], ["BezahltAm", "text"], ["PdfUrl", "text"], ["Versendet", "text"],
              ["Firma", "text"], ["UstSatz", "number"]],
     Einstellungen: [["Wert", "note"]],
-    Benutzer: [["Name", "text"], ["EntraId", "text"], ["Rolle", "text"], ["Aktiv", "text"]]
+    Benutzer: [["Name", "text"], ["EntraId", "text"], ["Rolle", "text"], ["Aktiv", "text"], ["Finanzen", "text"]]
   };
 
   let msalApp = null, account = null, siteId = null, groupId = C.groupId || null;
@@ -212,32 +212,85 @@
     }
   }
 
-  // ---------- Private Daten im eigenen OneDrive ----------
-  const PRIVAT_PFAD = "Ein-Facher-Privat/finanzen.json";
+  // ---------- Private Daten in SharePoint: Bibliothek EF_Privat (nur für berechtigte Personen) ----------
+  // Die Bibliothek liegt auf derselben Site wie die App-Daten, hat aber eigene Berechtigungen
+  // (in SharePoint: Berechtigungsvererbung beenden, nur Inhaber + Ehepartner). Ohne Berechtigung liefert Graph 403/404.
+  const PRIVAT_BIB = (C.listPrefix || "EF_") + "Privat";
+  const PRIVAT_DATEI = "finanzen.json";
+  let privatDriveId = null;
 
-  async function privatLaden() {
+  async function privatDrive(anlegen) {
+    if (privatDriveId) return privatDriveId;
+    const sid = await site();
+    const drives = (await g(`/sites/${sid}/drives?$select=id,name,webUrl`)).value || [];
+    let d = drives.find(x => x.name === PRIVAT_BIB);
+    if (!d && anlegen) {
+      await g(`/sites/${sid}/lists`, { method: "POST", body: { displayName: PRIVAT_BIB, list: { template: "documentLibrary" } } });
+      d = ((await g(`/sites/${sid}/drives?$select=id,name,webUrl`)).value || []).find(x => x.name === PRIVAT_BIB);
+    }
+    if (!d) return null;
+    privatDriveId = d.id;
+    privatWebUrl = d.webUrl;
+    return d.id;
+  }
+  let privatWebUrl = null;
+
+  async function privatLaden(anlegen) {
+    const did = await privatDrive(anlegen);
+    if (!did) return { daten: null, bibliothek: false };
     let meta;
     try {
-      meta = await g(`/me/drive/root:/${PRIVAT_PFAD}?select=id,@microsoft.graph.downloadUrl`, { scopes: FILE_SCOPES });
+      meta = await g(`/drives/${did}/root:/${PRIVAT_DATEI}?select=id,@microsoft.graph.downloadUrl`);
     } catch (e) {
-      if (/404|itemNotFound/i.test(e.message)) return null;   // noch keine Datei
+      if (/404|itemNotFound/i.test(e.message)) return { daten: null, bibliothek: true };
       throw e;
     }
     const url = meta["@microsoft.graph.downloadUrl"];
-    if (!url) return null;
+    if (!url) return { daten: null, bibliothek: true };
     const res = await fetch(url);
-    if (!res.ok) throw new Error("OneDrive-Download fehlgeschlagen: " + res.status);
+    if (!res.ok) throw new Error("Download fehlgeschlagen: " + res.status);
     const txt = await res.text();
-    return txt ? JSON.parse(txt) : null;
+    return { daten: txt ? JSON.parse(txt) : null, bibliothek: true };
   }
 
   async function privatSpeichern(obj) {
+    const did = await privatDrive(true);
     const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
-    return g(`/me/drive/root:/${PRIVAT_PFAD}:/content`, { method: "PUT", body: blob, headers: { "Content-Type": "application/json" }, scopes: FILE_SCOPES });
+    return g(`/drives/${did}/root:/${PRIVAT_DATEI}:/content`, { method: "PUT", body: blob, headers: { "Content-Type": "application/json" } });
+  }
+
+  // Wer hat Zugriff auf die Bibliothek? offen = Site-Gruppen (Mitglieder/Besucher) haben noch Zugriff
+  async function privatZugriff() {
+    const did = await privatDrive(false);
+    if (!did) return null;
+    const perms = (await g(`/drives/${did}/root/permissions`)).value || [];
+    const personen = [], gruppen = [];
+    perms.forEach(pm => {
+      const g2 = pm.grantedToV2 || {}, rolle = (pm.roles || []).join(", ");
+      if (g2.siteGroup) gruppen.push({ name: g2.siteGroup.displayName || g2.siteGroup.loginName || "Gruppe", rolle });
+      else if (g2.group) gruppen.push({ name: g2.group.displayName || "Gruppe", rolle });
+      else if (g2.user || (pm.grantedTo && pm.grantedTo.user)) {
+        const u = g2.user || pm.grantedTo.user;
+        personen.push({ name: u.displayName || u.email || "?", email: (u.email || "").toLowerCase(), rolle });
+      }
+    });
+    const offen = gruppen.filter(gr => /mitglied|member|besucher|visitor|leser|reader|jeder|everyone/i.test(gr.name));
+    return { personen, gruppen, offen, webUrl: privatWebUrl };
+  }
+
+  // Nur zum einmaligen Übernehmen älterer Daten aus dem eigenen OneDrive
+  async function onedriveAltLaden() {
+    try {
+      const meta = await g(`/me/drive/root:/Ein-Facher-Privat/finanzen.json?select=id,@microsoft.graph.downloadUrl`, { scopes: FILE_SCOPES });
+      const url = meta["@microsoft.graph.downloadUrl"];
+      if (!url) return null;
+      const res = await fetch(url);
+      return res.ok ? JSON.parse(await res.text()) : null;
+    } catch (_) { return null; }
   }
 
   window.EFGraph = {
     init, login, logout, account: () => account, items, create, update, remove, ensureLists, checkSchema, uploadPdf, sendMail,
-    users, addSiteMember, removeSiteMember, privatLaden, privatSpeichern
+    users, addSiteMember, removeSiteMember, privatLaden, privatSpeichern, privatZugriff, onedriveAltLaden, privatBibliothek: () => PRIVAT_BIB
   };
 })();
