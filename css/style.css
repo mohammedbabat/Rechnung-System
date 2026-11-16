@@ -110,6 +110,7 @@ textarea { resize: vertical; }
 .b-bezahlt, .b-angenommen { background: #DCFCE7; color: #166534; }
 .b-ueberfaellig { background: #FEF3C7; color: #92400E; }
 .b-storniert, .b-abgelehnt, .b-storno { background: #FEE2E2; color: #991B1B; }
+.b-aufgehoben { background: #F1F5F9; color: #64748B; text-decoration: line-through; }
 
 /* KPIs */
 .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
