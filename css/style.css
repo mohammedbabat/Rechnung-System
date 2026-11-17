@@ -373,3 +373,19 @@ main { min-width: 0; }
 .bankleiste .neg { color: var(--err); }
 .bankstatus { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 #bankBanken > div { margin: 4px 0; }
+
+/* Auf- und zuklappbare Karten */
+.card.klapp > .klapp-kopf { cursor: pointer; user-select: none; position: relative; padding-right: 30px; }
+.card.klapp > .klapp-kopf::after { content: ""; position: absolute; right: 4px; top: 50%; width: 9px; height: 9px; margin-top: -7px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .15s; }
+.card.klapp.zu > .klapp-kopf::after { transform: rotate(-45deg); margin-top: -4px; }
+.card.klapp > .klapp-kopf:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+.card.klapp.zu > :not(.klapp-kopf) { display: none !important; }
+.card.klapp.zu > .klapp-kopf, .card.klapp.zu > .klapp-kopf h3 { margin-bottom: 0; }
+.card.klapp:not(.zu) > .klapp-kopf { margin-bottom: 12px; }
+.card.klapp > .klapp-kopf:hover h3, .card.klapp > h3.klapp-kopf:hover { color: var(--accent); }
+.klappzeile { margin: 0 2px 8px; align-items: center; }
+.klappalle .link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
+.klappalle .link:hover { text-decoration: underline; }
+#lst > .card, #artGr > .card { margin-bottom: 12px; }
+.card.klapp.zu { padding-top: 14px; padding-bottom: 14px; }
