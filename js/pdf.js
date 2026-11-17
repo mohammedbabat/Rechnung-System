@@ -134,6 +134,30 @@
     if (!mitUst && f.Hinweis19) content.push({ text: f.Hinweis19, margin: [0, 14, 0, 0] });
     if (b.Notiz) content.push({ text: b.Notiz, margin: [0, 10, 0, 0] });
     if (zahl) content.push({ text: zahl, margin: [0, 10, 0, 0] });
+    // GiroCode: Kunde scannt mit der Banking-App – Empfänger, IBAN, Betrag und Rechnungsnummer sind ausgefüllt
+    const Z = (typeof window !== "undefined" && window.EFZahlungen) || null;
+    const qr = b.Typ === "Rechnung" && Z && t.brutto > 0 && b.Status !== "Bezahlt"
+      ? Z.epcPayload({ name: f.Kontoinhaber || f.Inhaber || f.Firma, iban: f.IBAN, bic: f.BIC, betrag: t.brutto, zweck: nr }) : null;
+    if (qr) content.push({
+      unbreakable: true, margin: [0, 14, 0, 0],
+      table: { widths: [86, "*"], body: [[
+        { qr, fit: 84, eccLevel: "M", margin: [2, 2, 2, 2] },
+        { stack: [
+          { text: "Bequem bezahlen mit der Banking-App", bold: true, fontSize: 10, color: accent, margin: [0, 2, 0, 3] },
+          { text: "QR-Code (GiroCode) in der Banking-App unter „Überweisung“ › „Scannen“ einlesen – alles ist schon ausgefüllt.", fontSize: 8, color: "#555555", margin: [0, 0, 0, 6] },
+          { table: { widths: ["auto", "*"], body: [
+            ["Empfänger", f.Kontoinhaber || f.Inhaber || f.Firma || ""],
+            ["IBAN", Z.ibanSchoen(f.IBAN)],
+            ...(f.BIC ? [["BIC", f.BIC]] : []),
+            ["Betrag", eur(t.brutto)],
+            ["Verwendungszweck", nr]
+          ].map(([a, v]) => [{ text: a, color: "#777777", fontSize: 8 }, { text: v, bold: a !== "Empfänger" && a !== "BIC", fontSize: 8.5 }]) },
+            layout: { defaultBorder: false, paddingTop: () => 1, paddingBottom: () => 1, paddingLeft: () => 0, paddingRight: () => 8 } }
+        ], margin: [8, 0, 0, 0] }
+      ]] },
+      layout: { hLineWidth: () => 0.6, vLineWidth: (i, node) => (i === 0 || i === node.table.widths.length ? 0.6 : 0), hLineColor: () => "#dddddd", vLineColor: () => "#dddddd",
+        paddingTop: () => 6, paddingBottom: () => 6, paddingLeft: () => 6, paddingRight: () => 6 }
+    });
     content.push({ text: "Mit freundlichen Grüßen", margin: [0, 18, 0, 0] });
     content.push({ text: f.Inhaber || f.Firma || "", margin: [0, 4, 0, 0] });
 
