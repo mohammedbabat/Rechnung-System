@@ -70,7 +70,11 @@ async function alle(url) {
 }
 
 // ---------- Supabase (Gehalt-Monitor) ----------
-async function bankEingaenge(cfg, ab) {
+// Die Banken erlauben ohne dich (PSD2) nur wenige automatische Abrufe pro Tag (meist 4).
+// Darum fragt der Wächter die BANK höchstens alle 3,5 Stunden tagsüber ab – die schon geholten
+// Umsätze liest er aber bei jedem Lauf (kostet nichts). Öffnest du eine App, holt die neu.
+const BANK_ABSTAND = 3.5 * 3600 * 1000;
+async function bankEingaenge(cfg, ab, state) {
   const mail = process.env.SB_EMAIL, pw = process.env.SB_PASSWORD;
   if (!cfg || !cfg.url || !cfg.key) { log("Bank: in der App nicht eingerichtet – übersprungen"); return null; }
   if (!mail || !pw) { log("Bank: Secrets SB_EMAIL/SB_PASSWORD fehlen – übersprungen"); return null; }
@@ -79,10 +83,15 @@ async function bankEingaenge(cfg, ab) {
   const lj = await login.json().catch(() => ({}));
   if (!login.ok) throw new Error("Gehalt-Monitor-Anmeldung fehlgeschlagen (SB_EMAIL/SB_PASSWORD prüfen)");
   const auth = { apikey: cfg.key, Authorization: "Bearer " + lj.access_token };
-  const s = await fetch(`${cfg.url}/functions/v1/bank`, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, auth), body: JSON.stringify({ action: "sync" }) });
-  const sj = await s.json().catch(() => ({}));
-  const fehler = Object.keys(sj.fehler || {});
-  log(`Bank: Abruf ${s.ok ? "ok" : "fehlgeschlagen (" + s.status + ")"}${fehler.length ? ", Hinweis bei " + fehler.length + " Bank(en)" : ""}`);
+  const stunde = Number(new Intl.DateTimeFormat("de-DE", { timeZone: "Europe/Berlin", hour: "numeric", hourCycle: "h23" }).format(new Date()));
+  const faellig = !state.bankAbruf || Date.now() - new Date(state.bankAbruf).getTime() >= BANK_ABSTAND;
+  if (faellig && stunde >= 6 && stunde < 22) {
+    const s = await fetch(`${cfg.url}/functions/v1/bank`, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, auth), body: JSON.stringify({ action: "sync" }) });
+    const sj = await s.json().catch(() => ({}));
+    const fehler = Object.keys(sj.fehler || {});
+    if (s.ok) state.bankAbruf = new Date().toISOString();
+    log(`Bank: neuer Abruf ${s.ok ? "ok" : "fehlgeschlagen (" + s.status + ")"}${fehler.length ? ", Hinweis bei " + fehler.length + " Bank(en)" : ""}`);
+  } else log("Bank: kein neuer Abruf (Abstand/Nachtruhe) – vorhandene Umsätze werden geprüft");
   const q = new URLSearchParams({ select: "datum,betrag,gegenpartei,verwendungszweck", order: "datum.desc", limit: "1000" });
   q.append("betrag", "gt.0"); q.append("datum", "gte." + ab);
   const r = await fetch(`${cfg.url}/rest/v1/bank_umsaetze?${q}`, { headers: auth });
@@ -119,7 +128,7 @@ async function main() {
     const frueh = offen.map(b => b.datum || heute).sort()[0];
     const ab = new Date(new Date(frueh).getTime() - 7 * 86400000).toISOString().slice(0, 10);
     let eing = null;
-    try { eing = await bankEingaenge(bankCfg, ab); } catch (e) { log("Bank: " + e.message); }
+    try { eing = await bankEingaenge(bankCfg, ab, state); } catch (e) { log("Bank: " + e.message); }
     if (eing) {
       const off = offen.map(b => ({ id: b.id, nr: b.nr, betrag: b.betrag, kunde: b.kunde, b }));
       const bez = rech.filter(b => b.status === "Bezahlt").map(b => ({ id: b.id, nr: b.nr, b }));

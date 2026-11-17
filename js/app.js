@@ -1427,9 +1427,9 @@
   function benachHtml() {
     const d = (S.benach || {}).d || {}, w = S.waechter;
     const zuletzt = w && w.letzterLauf ? new Date(w.letzterLauf).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : null;
-    const alt = w && w.letzterLauf && Date.now() - new Date(w.letzterLauf).getTime() > 6 * 3600000;
+    const alt = w && w.letzterLauf && Date.now() - new Date(w.letzterLauf).getTime() > 2 * 3600000;
     return `<div class="card" id="benachCard"><h3>📧 Benachrichtigungen per E-Mail</h3>
-      <p class="small muted">Der <strong>Rechnungs-Wächter</strong> läuft automatisch alle 2 Stunden (ca. 7–21 Uhr) – auch wenn die App geschlossen ist.
+      <p class="small muted">Der <strong>Rechnungs-Wächter</strong> läuft automatisch etwa alle 10 Minuten – auch wenn die App geschlossen ist (die Bank selbst fragt er tagsüber ca. alle 3,5 Stunden neu ab).
         Er prüft die Bank, bucht bezahlte Rechnungen und schickt eine E-Mail, sobald eine Rechnung <strong>überfällig</strong> oder <strong>bezahlt</strong> ist (jede Meldung nur einmal).</p>
       <form id="benachF" class="grid">
         <label>An<input name="an" value="${esc(d.an || "")}" placeholder="name@beispiel.de"></label>

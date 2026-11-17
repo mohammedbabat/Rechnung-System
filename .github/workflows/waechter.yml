@@ -6,8 +6,10 @@ name: Rechnungs-Wächter
 
 on:
   schedule:
-    # alle 2 Stunden zwischen ca. 7 und 21 Uhr deutscher Zeit (Zeiten in UTC)
-    - cron: "17 5-19/2 * * *"
+    # alle 10 Minuten (GitHub startet geplante Läufe teils einige Minuten später).
+    # Die Bank selbst wird nur ca. alle 3,5 Stunden tagsüber neu abgefragt (Limit der Banken),
+    # Buchungen aus der App und Überfälligkeiten werden aber bei jedem Lauf gemeldet.
+    - cron: "*/10 * * * *"
   workflow_dispatch:
     inputs:
       trocken:
