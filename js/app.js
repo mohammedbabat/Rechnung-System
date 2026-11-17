@@ -1427,9 +1427,9 @@
   function benachHtml() {
     const d = (S.benach || {}).d || {}, w = S.waechter;
     const zuletzt = w && w.letzterLauf ? new Date(w.letzterLauf).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : null;
-    const alt = w && w.letzterLauf && Date.now() - new Date(w.letzterLauf).getTime() > 2 * 3600000;
+    const alt = w && w.letzterLauf && Date.now() - new Date(w.letzterLauf).getTime() > 90 * 60000;
     return `<div class="card" id="benachCard"><h3>📧 Benachrichtigungen per E-Mail</h3>
-      <p class="small muted">Der <strong>Rechnungs-Wächter</strong> läuft automatisch etwa alle 10 Minuten – auch wenn die App geschlossen ist (die Bank selbst fragt er tagsüber ca. alle 3,5 Stunden neu ab).
+      <p class="small muted">Der <strong>Rechnungs-Wächter</strong> läuft automatisch <strong>jede Viertelstunde (:00, :15, :30, :45)</strong> – auch wenn die App geschlossen ist. GitHub startet manchmal ein paar Minuten später. Die Bank selbst fragt er tagsüber ca. alle 3,5 Stunden neu ab.
         Er prüft die Bank, bucht bezahlte Rechnungen und schickt eine E-Mail, sobald eine Rechnung <strong>überfällig</strong> oder <strong>bezahlt</strong> ist (jede Meldung nur einmal).</p>
       <form id="benachF" class="grid">
         <label>An<input name="an" value="${esc(d.an || "")}" placeholder="name@beispiel.de"></label>
@@ -1438,7 +1438,7 @@
         <label class="chk"><input type="checkbox" name="bezahlt" ${d.bezahlt !== false ? "checked" : ""}> Wenn eine Rechnung bezahlt ist</label>
         <label class="chk wide"><input type="checkbox" name="aktiv" ${d.aktiv !== false ? "checked" : ""}> E-Mails senden (aus = nur prüfen und buchen)</label>
         <div class="actions wide"><span class="small ${!w ? "muted" : alt ? "neg" : "muted"}">${!w ? "Der Wächter ist noch nie gelaufen – Einrichtung siehe README auf GitHub (Abschnitt „Automatische E-Mail-Benachrichtigungen“)."
-          : `Letzter Lauf: ${esc(zuletzt)}${w.letzterStand ? ` · ${w.letzterStand.gebucht || 0} gebucht · ${w.letzterStand.gemeldet || 0} gemeldet${w.letzterStand.bank ? "" : " · ohne Bankprüfung"}` : ""}${alt ? " – länger nicht gelaufen, GitHub Actions prüfen" : ""}`}</span>
+          : `Nächster Lauf: ca. ${(() => { const n = new Date(); n.setSeconds(0, 0); n.setMinutes(Math.floor(n.getMinutes() / 15) * 15 + 15); return n.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }); })()} Uhr · Letzter Lauf: ${esc(zuletzt)}${w.letzterStand ? ` · ${w.letzterStand.gebucht || 0} gebucht · ${w.letzterStand.gemeldet || 0} gemeldet${w.letzterStand.bank ? "" : " · ohne Bankprüfung"}` : ""}${alt ? " – länger nicht gelaufen, GitHub Actions prüfen" : ""}`}</span>
           <span class="grow"></span><button class="btn ghost">Speichern</button></div>
       </form></div>`;
   }
