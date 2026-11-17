@@ -250,10 +250,19 @@
   }
 
   // ---------- Navigation mit Firmenwechsler und Unterordnern ----------
+  // Untermenüs im Seitenmenü: auf-/zuklappbar, Standard zugeklappt, Zustand je Browser gemerkt
+  let navAuf = (() => { try { return JSON.parse(localStorage.getItem("ef_nav_auf") || "{}"); } catch (_) { return {}; } })();
   function renderNav() {
     const { sec, sub } = S.nav;
     const link = (key, label) =>
       `<a href="#/${key}" class="${sec === key ? (sub ? "open" : "active") : ""}">${esc(label)}</a>`;
+    // Hauptpunkt mit Pfeil zum Auf-/Zuklappen; zugeklappt zeigt er die wichtigste Zahl (z. B. überfällig)
+    const gruppe = (key, label, subHtml, badge) => {
+      const auf = !!navAuf[key];
+      return `<div class="navgrp ${auf ? "auf" : ""}"><a href="#/${key}" class="${sec === key ? (sub ? "open" : "active") : ""}">${esc(label)}${!auf && badge ? badge : ""}</a>
+        <button type="button" class="navtog" data-navtog="${key}" aria-expanded="${auf}" title="${auf ? "Unterpunkte zuklappen" : "Unterpunkte aufklappen"}"></button></div>
+        ${auf ? `<div class="subnav">${subHtml}</div>` : ""}`;
+    };
     const subLink = (base, key, label, n, warn) =>
       `<a class="sub ${sec === base && (sub || "alle") === key ? "active" : ""}" href="#/${base}/${key}">${esc(label)}<span class="cnt ${warn && n ? "warn" : ""}">${n}</span></a>`;
 
@@ -265,29 +274,33 @@
     h += link("dashboard", "Übersicht");
 
     const re = rechnungen();
-    h += link("rechnungen", "Rechnungen");
-    if (sec === "rechnungen") {
-      h += `<div class="subnav">${RE_STATI.map(([k, l]) => subLink("rechnungen", k, l, re.filter(RE_FILTER[k]).length, k === "ueberfaellig")).join("")}</div>`;
-    }
+    const reUeber = re.filter(RE_FILTER.ueberfaellig).length;
+    h += gruppe("rechnungen", "Rechnungen", RE_STATI.map(([k, l]) => subLink("rechnungen", k, l, re.filter(RE_FILTER[k]).length, k === "ueberfaellig")).join(""),
+      reUeber ? `<span class="cnt warn" title="überfällig">${reUeber}</span>` : "");
 
     const an = angebote();
-    h += link("angebote", "Angebote");
-    if (sec === "angebote") {
-      h += `<div class="subnav">${AN_STATI.map(([k, l]) => subLink("angebote", k, l, an.filter(AN_FILTER[k]).length)).join("")}</div>`;
-    }
+    h += gruppe("angebote", "Angebote", AN_STATI.map(([k, l]) => subLink("angebote", k, l, an.filter(AN_FILTER[k]).length)).join(""));
 
     h += link("kunden", "Kunden");
 
-    h += link("artikel", "Artikel");
-    if (sec === "artikel") {
+    {
       let s = subLink("artikel", "alle", "Alle", S.artikel.length);
       artikelGruppen().forEach(([k, list]) => { s += subLink("artikel", k === OHNE_KAT ? "ohne" : enc(k), k, list.length); });
-      h += `<div class="subnav">${s}</div>`;
+      h += gruppe("artikel", "Artikel", s);
     }
 
     if (can("finanzen") && window.EFFinanzen) h += link("finanzen", "Finanzen (privat)");
     if (can("einstellungen") || can("benutzer")) h += link("einstellungen", "Einstellungen");
     $("#nav").innerHTML = h;
+    $("#nav").onclick = e => {
+      const t = e.target.closest("[data-navtog]");
+      if (!t) return;
+      e.preventDefault();
+      const k = t.dataset.navtog;
+      if (navAuf[k]) delete navAuf[k]; else navAuf[k] = true;
+      try { localStorage.setItem("ef_nav_auf", JSON.stringify(navAuf)); } catch (_) { /* egal */ }
+      renderNav();
+    };
     const sel = $("#firmaSel");
     if (sel) sel.onchange = e => wechsleFirma(e.target.value, true);
     const brandSmall = document.querySelector(".sidebar .brand small");
