@@ -84,7 +84,72 @@
   const cur = () => firmaOf(S.fk);
 
   // ---------- UI-Helfer ----------
-  const view = html => { $("#view").innerHTML = html; window.scrollTo(0, 0); };
+  const view = html => { $("#view").innerHTML = html; window.scrollTo(0, 0); klappAnwenden(); };
+
+  // ---------- Auf- und zuklappbare Bereiche (Einstellungen, Finanzen, Rechnungen, Angebote, Kunden, Artikel) ----------
+  // Jede Karte mit Überschrift wird klappbar; Standard: zugeklappt. Der Zustand wird je Browser gemerkt.
+  const KLAPP_SEITEN = /^#\/(einstellungen|finanzen|rechnungen|angebote|kunden|artikel)/;
+  let klappOffen = (() => { try { return JSON.parse(localStorage.getItem("ef_klapp") || "{}"); } catch (_) { return {}; } })();
+  const klappMerken = () => { try { localStorage.setItem("ef_klapp", JSON.stringify(klappOffen)); } catch (_) { /* egal */ } };
+  const klappSlug = t => String(t || "").toLowerCase().replace(/\b(19|20)\d{2}\b/g, "").replace(/[^a-zäöüß]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  function klappAnwenden() {
+    const v = $("#view");
+    if (!v || !KLAPP_SEITEN.test(location.hash || "")) return;
+    const seite = (location.hash.match(KLAPP_SEITEN) || [])[1];
+    const gezaehlt = {};
+    v.querySelectorAll(".card").forEach(card => {
+      const kopf = card.firstElementChild;
+      if (!kopf || card.children.length < 2) return;
+      const h = kopf.matches("h3") ? kopf : kopf.querySelector(":scope > h3");
+      if (!h) return;
+      // fester Schlüssel: data-klapp-key, sonst die id der Karte, sonst die Überschrift (ohne Jahreszahlen)
+      let key = seite + ":" + (card.dataset.klappKey || card.id || klappSlug(h.textContent));
+      gezaehlt[key] = (gezaehlt[key] || 0) + 1;
+      if (gezaehlt[key] > 1) key += "-" + gezaehlt[key];
+      card.classList.add("klapp");
+      const offen = !!klappOffen[key] || card.dataset.klappAuf === "1";     // klappAuf: z. B. bei aktiver Suche
+      card.classList.toggle("zu", !offen);
+      kopf.classList.add("klapp-kopf");
+      kopf.setAttribute("aria-expanded", offen ? "true" : "false");
+      if (!kopf.hasAttribute("tabindex")) kopf.setAttribute("tabindex", "0");
+      kopf.setAttribute("role", "button");
+      kopf.dataset.klapp = key;
+      if (kopf.dataset.klappGebunden) return;
+      kopf.dataset.klappGebunden = "1";
+      const umschalten = e => {
+        if (e.target.closest("button, a, input, select, textarea, label") && e.target !== kopf) return;
+        const k = kopf.dataset.klapp, auf = card.classList.contains("zu");
+        card.classList.toggle("zu", !auf);
+        kopf.setAttribute("aria-expanded", auf ? "true" : "false");
+        if (auf) klappOffen[k] = true; else delete klappOffen[k];
+        klappMerken();
+      };
+      kopf.addEventListener("click", umschalten);
+      kopf.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target === kopf) { e.preventDefault(); umschalten(e); } });
+    });
+    // "alle auf · alle zu" in der Kopfzeile, wenn die Seite mehrere klappbare Bereiche hat und noch keinen Schalter
+    const kopfzeile = v.querySelector(".head");
+    if (kopfzeile && !v.querySelector("[data-klappalle]") && v.querySelectorAll(".card.klapp").length > 1)
+      kopfzeile.insertAdjacentHTML("beforeend", klappSchalter());
+  }
+  // Schalter "Alle aufklappen / zuklappen" für die aktuelle Seite
+  function klappAlle(auf) {
+    document.querySelectorAll("#view .card.klapp > .klapp-kopf").forEach(k => {
+      const card = k.parentElement;
+      card.classList.toggle("zu", !auf); k.setAttribute("aria-expanded", auf ? "true" : "false");
+      if (auf) klappOffen[k.dataset.klapp] = true; else delete klappOffen[k.dataset.klapp];
+    });
+    klappMerken();
+  }
+  const klappSchalter = () => `<span class="klappalle"><button type="button" class="link small" data-klappalle="1">alle auf</button> · <button type="button" class="link small" data-klappalle="0">alle zu</button></span>`;
+  document.addEventListener("click", e => { const b = e.target.closest("[data-klappalle]"); if (b) klappAlle(b.dataset.klappalle === "1"); });
+  // Teile der Seite werden neu gezeichnet (z. B. Ergebnisse in Finanzen) – dann erneut anwenden
+  let klappGeplant = false;
+  new MutationObserver(() => {
+    if (klappGeplant) return;
+    klappGeplant = true;
+    Promise.resolve().then(() => { klappGeplant = false; klappAnwenden(); });
+  }).observe(document.getElementById("view") || document.body, { childList: true, subtree: true });
   let toastT;
   function toast(msg, kind = "ok") {
     const t = $("#toast");
@@ -409,13 +474,20 @@
       ${can("bearbeiten") ? `<a class="btn primary" href="#/beleg/neu-${typ}">+ ${isA ? "Angebot" : "Rechnung"}</a>` : ""}</div>
       ${!isA ? `<div id="bankLeiste"></div>` : ""}
       <div class="tabs">${defs.map(([k, l]) => `<a href="#/${base}/${k}" class="${k === sub ? "active" : ""}">${esc(l)}</a>`).join("")}</div>
-      <div class="card" id="lst"></div><div class="small muted sumline" id="sumline"></div>`);
+      <div id="lst"></div><div class="small muted sumline" id="sumline"></div>`);
     const draw = () => {
       const q = $("#q").value.toLowerCase();
       const list = belege().filter(b => (isA ? b.Typ === "Angebot" : b.Typ !== "Angebot")).filter(F[sub])
         .filter(b => !q || ((b.Title || "") + " " + ((b.Kunde && b.Kunde.Title) || "")).toLowerCase().includes(q))
         .sort(byDateDesc);
-      $("#lst").innerHTML = belegTable(list, !isA);
+      const monate = [];
+      list.forEach(b => { const m = String(b.Datum || "").slice(0, 7) || "ohne"; let g = monate.find(x => x.m === m); if (!g) monate.push(g = { m, l: [] }); g.l.push(b); });
+      const mName = m => m === "ohne" ? "Ohne Datum" : new Date(m + "-01T12:00:00").toLocaleDateString("de-DE", { month: "long", year: "numeric" });
+      $("#lst").innerHTML = list.length ? (monate.length > 1 ? `<div class="row between klappzeile"><span class="small muted">${monate.length} Monate</span>${klappSchalter()}</div>` : "")
+        + monate.map(g => `<div class="card" data-klapp-key="${base}-${sub}-${g.m}" ${q ? 'data-klapp-auf="1"' : ""}>
+          <div class="row between"><h3>${esc(mName(g.m))}</h3><span class="small muted">${g.l.length} ${g.l.length === 1 ? "Beleg" : "Belege"} · ${eur(sumOf(g.l.filter(b => b.Status !== "Aufgehoben")))}</span></div>
+          ${belegTable(g.l, !isA)}</div>`).join("")
+        : `<div class="card">${belegTable([], !isA)}</div>`;
       $("#sumline").textContent = list.length ? `${list.length} ${list.length === 1 ? "Beleg" : "Belege"} · Summe ${eur(sumOf(list.filter(b => b.Status !== "Aufgehoben")))}` : "";
     };
     $("#q").oninput = draw; draw();
@@ -595,11 +667,17 @@
   function kundenView() {
     view(`<div class="head"><h1>Kunden</h1><span class="grow"></span><input id="q" class="search" placeholder="Suchen …">
       ${can("bearbeiten") ? `<button class="btn primary" id="neu">+ Neuer Kunde</button>` : ""}</div>
-      <div class="card tblwrap"><table class="tbl"><thead><tr><th>Nr.</th><th>Name</th><th>Ort</th><th>E-Mail</th><th class="r">Umsatz ${esc(cur().Firma)}</th></tr></thead><tbody id="tb"></tbody></table></div>
+      <div class="card" data-klapp-key="liste" id="kuCard"><div class="row between"><h3>Kunden <span class="muted" id="kuAnz"></span></h3></div>
+        <div class="tblwrap"><table class="tbl"><thead><tr><th>Nr.</th><th>Name</th><th>Ort</th><th>E-Mail</th><th class="r">Umsatz ${esc(cur().Firma)}</th></tr></thead><tbody id="tb"></tbody></table></div></div>
       <p class="small muted">Kunden und Artikel gelten für alle Firmen gemeinsam.</p>`);
     const draw = () => {
       const q = $("#q").value.toLowerCase();
-      $("#tb").innerHTML = S.kunden.filter(k => !q || [k.Title, k.Ort, k.Email, k.Kundennummer].join(" ").toLowerCase().includes(q)).sort(byTitle)
+      const liste = S.kunden.filter(k => !q || [k.Title, k.Ort, k.Email, k.Kundennummer].join(" ").toLowerCase().includes(q));
+      $("#kuAnz").textContent = `(${liste.length})`;
+      const card = $("#kuCard");
+      if (q && card.classList.contains("zu")) { card.dataset.klappAuf = "1"; card.classList.remove("zu"); }
+      else if (!q && card.dataset.klappAuf) { delete card.dataset.klappAuf; klappAnwenden(); }
+      $("#tb").innerHTML = liste.sort(byTitle)
         .map(k => {
           const ums = sumOf(belege().filter(b => String(b.KundeId) === String(k.id) && b.Typ !== "Angebot" && b.Status !== "Entwurf"));
           return `<tr data-id="${k.id}"><td>${esc(k.Kundennummer)}</td><td><strong>${esc(k.Title)}</strong>${k.Ansprechpartner ? `<div class="small muted">${esc(k.Ansprechpartner)}</div>` : ""}</td>
@@ -726,19 +804,26 @@
       ${can("bearbeiten") ? `<button class="btn primary" id="neu">+ Neuer Artikel</button><input type="file" id="impFile" accept=".csv,text/csv" class="hidden">` : ""}</div>
       <div class="tabs"><a href="#/artikel" class="${kat ? "" : "active"}">Alle</a>${artikelGruppen().map(([k]) =>
         `<a href="#/artikel/${k === OHNE_KAT ? "ohne" : enc(k)}" class="${k === kat ? "active" : ""}">${esc(k)}</a>`).join("")}</div>
-      <div class="card tblwrap"><table class="tbl"><thead><tr><th>Art.-Nr.</th><th>Bezeichnung</th>${kat ? "" : "<th>Kategorie</th>"}<th>Einheit</th><th class="r">Preis netto</th></tr></thead><tbody id="tb"></tbody></table></div>
+      <div id="artGr"></div>
       ${can("bearbeiten") ? `<p class="small muted">CSV-Spalten: Artikelnummer; Kategorie; Bezeichnung; Einheit; Preis; Beschreibung – gleiche Artikelnummer wird aktualisiert, neue werden angelegt. Preise sind Nettopreise; bei Kleinunternehmern ist netto = Endpreis.</p>` : ""}`);
     const draw = () => {
       const q = $("#q").value.toLowerCase();
-      $("#tb").innerHTML = S.artikel.filter(a => !kat || katOf(a) === kat)
+      const liste = S.artikel.filter(a => !kat || katOf(a) === kat)
         .filter(a => !q || [a.Title, a.Artikelnummer, a.Beschreibung, a.Kategorie].join(" ").toLowerCase().includes(q))
-        .sort(byNr)
-        .map(a => `<tr data-id="${a.id}"><td>${esc(a.Artikelnummer)}</td><td><strong>${esc(a.Title)}</strong>${a.Beschreibung ? `<div class="small muted pre">${esc(a.Beschreibung)}</div>` : ""}</td>
-          ${kat ? "" : `<td class="small">${esc(a.Kategorie || "–")}</td>`}<td>${esc(a.Einheit)}</td><td class="r">${eur(a.Preis)}</td></tr>`).join("")
-        || `<tr><td colspan="${kat ? 4 : 5}" class="empty">Keine Artikel.</td></tr>`;
+        .sort(byNr);
+      const gruppen = [];
+      liste.forEach(a => { const k = katOf(a); let g = gruppen.find(x => x.k === k); if (!g) gruppen.push(g = { k, l: [] }); g.l.push(a); });
+      gruppen.sort((x, y) => (x.k === OHNE_KAT) - (y.k === OHNE_KAT) || x.k.localeCompare(y.k, "de"));
+      const tabelle = l => `<div class="tblwrap"><table class="tbl"><thead><tr><th>Art.-Nr.</th><th>Bezeichnung</th><th>Einheit</th><th class="r">Preis netto</th></tr></thead><tbody>
+        ${l.map(a => `<tr data-id="${a.id}"><td>${esc(a.Artikelnummer)}</td><td><strong>${esc(a.Title)}</strong>${a.Beschreibung ? `<div class="small muted pre">${esc(a.Beschreibung)}</div>` : ""}</td>
+          <td>${esc(a.Einheit)}</td><td class="r">${eur(a.Preis)}</td></tr>`).join("")}</tbody></table></div>`;
+      $("#artGr").innerHTML = !liste.length ? `<div class="card"><p class="empty">Keine Artikel.</p></div>`
+        : (gruppen.length > 1 ? `<div class="row between klappzeile"><span class="small muted">${gruppen.length} Kategorien · ${liste.length} Artikel</span>${klappSchalter()}</div>` : "")
+          + gruppen.map(g => `<div class="card" data-klapp-key="kat-${esc(enc(g.k))}" ${q ? 'data-klapp-auf="1"' : ""}>
+            <div class="row between"><h3>${esc(g.k)}</h3><span class="small muted">${g.l.length} Artikel</span></div>${tabelle(g.l)}</div>`).join("");
     };
     $("#q").oninput = draw; draw();
-    $("#tb").onclick = e => { const tr = e.target.closest("tr[data-id]"); if (tr) artikelModal(S.artikel.find(a => a.id === tr.dataset.id)); };
+    $("#artGr").onclick = e => { const tr = e.target.closest("tr[data-id]"); if (tr) artikelModal(S.artikel.find(a => a.id === tr.dataset.id)); };
     if ($("#neu")) {
       $("#neu").onclick = () => artikelModal(null, kat && kat !== OHNE_KAT ? kat : "");
       $("#imp").onclick = () => $("#impFile").click();
