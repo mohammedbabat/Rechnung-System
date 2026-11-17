@@ -212,6 +212,7 @@ async function main() {
 
 main().catch(e => {
   console.error("FEHLER:", e.message);
-  if (/sendMail|ErrorAccessDenied|403/.test(e.message)) console.error("→ Der App fehlt die Anwendungsberechtigung Mail.Send (siehe README, Abschnitt Benachrichtigungen).");
+  if (/RAOP|AccessPolicy/i.test(e.message)) console.error("→ Exchange-Beschränkung (ApplicationAccessPolicy) blockiert das Senden. Nach dem Anlegen kann es über 1 Stunde dauern, bis sie greift – die Meldungen werden beim nächsten Lauf erneut versucht. Prüfen: Test-ApplicationAccessPolicy -Identity rechnung@ein-facher.de -AppId <Client-ID>");
+  else if (/sendMail|ErrorAccessDenied|403/.test(e.message)) console.error("→ Der App fehlt die Anwendungsberechtigung Mail.Send (siehe README, Abschnitt Benachrichtigungen).");
   process.exit(1);
 });
