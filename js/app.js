@@ -29,7 +29,7 @@
   const STEUER_KU = "Kleinunternehmer (§ 19 UStG)", STEUER_REG = "Regelbesteuert (mit USt)";
   const FIRMA_DEFAULT = {
     Firma: "Ein-Facher", Inhaber: "", Strasse: "", PLZ: "", Ort: "", Telefon: "", Email: "rechnung@ein-facher.de", Web: "www.ein-facher.de",
-    Steuernummer: "", UstId: "", Bank: "", IBAN: "", BIC: "",
+    Steuernummer: "", UstId: "", Bank: "", IBAN: "", BIC: "", Kontoinhaber: "",
     Steuer: STEUER_KU, UstSatz: 19, Nummernpraefix: "",
     MailFrom: C.mailFrom || "", PdfOrdner: C.pdfFolder || "Rechnungen",
     Zahlungsziel: 14, AngebotGueltig: 30, Umsatzgrenze: 25000, Farbe: "#7B2FBE",
@@ -400,6 +400,7 @@
     const label = defs.find(d => d[0] === sub)[1];
     view(`<div class="head"><h1>${isA ? "Angebote" : "Rechnungen"}${sub !== "alle" ? ` <span class="muted">· ${esc(label)}</span>` : ""}</h1><span class="grow"></span>
       <input id="q" class="search" placeholder="Nummer oder Kunde …">
+      ${!isA && can("bezahlt") ? `<button type="button" class="btn ghost" id="zahlImp" title="Kontoauszug (CSV) einlesen und Zahlungen zuordnen">💶 Zahlungen abgleichen</button>` : ""}
       ${can("bearbeiten") ? `<a class="btn primary" href="#/beleg/neu-${typ}">+ ${isA ? "Angebot" : "Rechnung"}</a>` : ""}</div>
       <div class="tabs">${defs.map(([k, l]) => `<a href="#/${base}/${k}" class="${k === sub ? "active" : ""}">${esc(l)}</a>`).join("")}</div>
       <div class="card" id="lst"></div><div class="small muted sumline" id="sumline"></div>`);
@@ -412,7 +413,68 @@
       $("#sumline").textContent = list.length ? `${list.length} ${list.length === 1 ? "Beleg" : "Belege"} · Summe ${eur(sumOf(list.filter(b => b.Status !== "Aufgehoben")))}` : "";
     };
     $("#q").oninput = draw; draw();
+    if ($("#zahlImp")) $("#zahlImp").onclick = () => zahlungenDialog(draw);
     setNav(base, sub === "alle" ? "" : sub);
+  }
+
+  // ---------- Zahlungen abgleichen: Kontoauszug-CSV → offene Rechnungen ----------
+  function zahlungenDialog(nachher) {
+    const Z = window.EFZahlungen, f = firmaOf(S.fk) || {};
+    modal(`<h2>💶 Zahlungen abgleichen – ${esc(f.Firma || "")}</h2>
+      <p class="small">Lade im Online-Banking die <strong>Umsätze als CSV</strong> herunter (z. B. „Export“ → „CSV“ oder „CSV-CAMT“) und zieh die Datei hierher.
+        Die App sucht die <strong>Rechnungsnummer</strong> und den <strong>Betrag</strong> und schlägt vor, welche Rechnungen bezahlt sind.</p>
+      <label class="dropzone" id="zDrop"><input type="file" id="zFile" accept=".csv,.txt,text/csv" hidden>
+        <strong>CSV-Datei hier ablegen</strong><span class="small muted">oder klicken zum Auswählen · Sparkasse, Volksbank, DKB, ING, N26, Commerzbank, Postbank …</span></label>
+      <p class="small muted">🔒 Die Datei wird nur in deinem Browser gelesen und nirgends gespeichert.</p>
+      <div id="zRes"></div>
+      <div class="actions"><span class="grow"></span><button type="button" class="btn ghost" id="zC">Schließen</button><button type="button" class="btn primary hidden" id="zOk">Ausgewählte als bezahlt buchen</button></div>`);
+    $("#zC").onclick = closeModal;
+    let vorschlaege = [];
+    const lesen = async file => {
+      try {
+        const txt = Z.dekodieren(await file.arrayBuffer());
+        const eing = Z.umsaetze(txt);
+        const offen = belege().filter(b => b.Typ === "Rechnung" && ["Offen", "Versendet"].includes(b.Status))
+          .map(b => ({ id: b.id, nr: b.Title, betrag: P.totals(b).brutto, kunde: (b.Kunde && b.Kunde.Title) || "", b }));
+        const bez = belege().filter(b => b.Typ === "Rechnung" && b.Status === "Bezahlt").map(b => ({ id: b.id, nr: b.Title, b }));
+        vorschlaege = Z.zuordnen(eing, offen, bez);
+        zeigen(file.name, eing.length);
+      } catch (e) { $("#zRes").innerHTML = `<div class="hfbox warn">${esc(e.message)}</div>`; $("#zOk").classList.add("hidden"); }
+    };
+    const ART = { sicher: ["✓ Nummer + Betrag passen", "pos"], abweichend: ["Nummer passt, Betrag weicht ab", "warn"], vorschlag: ["Betrag + Kunde passen, keine Nummer", "warn"], schonBezahlt: ["schon als bezahlt gebucht", "muted"] };
+    const zeigen = (name, anzahl) => {
+      const buchbar = vorschlaege.filter(v => v.art !== "schonBezahlt");
+      $("#zRes").innerHTML = `<p class="small"><strong>${esc(name)}</strong>: ${anzahl} Zahlungseingänge gelesen · ${buchbar.length} passen zu offenen Rechnungen</p>
+        ${vorschlaege.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th></th><th>Rechnung</th><th>Zahlung</th><th class="r">Betrag</th><th>Ergebnis</th></tr></thead><tbody>
+        ${vorschlaege.map((v, i) => `<tr>
+          <td>${v.art === "schonBezahlt" ? "" : `<input type="checkbox" data-zi="${i}" ${v.art === "sicher" ? "checked" : ""}>`}</td>
+          <td><strong>${esc(v.beleg.nr)}</strong><div class="small muted">${esc(v.beleg.kunde || "")}${v.beleg.betrag != null ? " · offen " + eur(v.beleg.betrag) : ""}</div></td>
+          <td>${esc(deDate(v.z.datum))}<div class="small muted">${esc((v.z.name || "").slice(0, 40))}${v.z.zweck ? " · " + esc(v.z.zweck.slice(0, 60)) : ""}</div></td>
+          <td class="r nowrap">${eur(v.z.betrag)}${v.diff ? `<div class="small ${v.diff < 0 ? "neg" : ""}">${v.diff > 0 ? "+" : ""}${eur(v.diff)}</div>` : ""}</td>
+          <td class="small ${ART[v.art][1]}">${ART[v.art][0]}${v.art === "abweichend" && v.diff < 0 ? " – Teilzahlung?" : ""}</td></tr>`).join("")}
+        </tbody></table></div>
+        <p class="small muted">Vorausgewählt sind nur sichere Treffer. Bei abweichendem Betrag oder ohne Rechnungsnummer bitte selbst prüfen und anhaken. Gebucht wird „Bezahlt“ mit dem Buchungsdatum der Bank.</p>`
+        : `<div class="hfbox">Keine Zahlung passt zu einer offenen Rechnung von ${esc(f.Firma || "")}. Steht die Rechnungsnummer im Verwendungszweck? Ist die richtige Firma oben links gewählt?</div>`}`;
+      $("#zOk").classList.toggle("hidden", !buchbar.length);
+    };
+    const inp = $("#zFile"), drop = $("#zDrop");
+    inp.onchange = () => inp.files[0] && lesen(inp.files[0]);
+    drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+    drop.ondragleave = () => drop.classList.remove("over");
+    drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) lesen(e.dataTransfer.files[0]); };
+    $("#zOk").onclick = () => {
+      const wahl = [...document.querySelectorAll("[data-zi]:checked")].map(c => vorschlaege[Number(c.dataset.zi)]);
+      if (!wahl.length) return toast("Bitte mindestens eine Zahlung anhaken", "err");
+      busy(async () => {
+        for (const v of wahl) {
+          const upd = { Status: "Bezahlt", BezahltAm: v.z.datum };
+          await G.update("Belege", v.beleg.b.id, upd);
+          Object.assign(v.beleg.b, upd); upsertLocal(v.beleg.b);
+        }
+        closeModal(); toast(`${wahl.length} ${wahl.length === 1 ? "Rechnung" : "Rechnungen"} als bezahlt gebucht`);
+        if (nachher) nachher();
+      });
+    };
   }
 
   // ---------- Kunden (für alle Firmen gemeinsam) ----------
@@ -806,7 +868,9 @@
   function fill(tpl) {
     const f = FD();
     const dokument = { Angebot: "unser Angebot", Rechnung: "unsere Rechnung", Storno: "unsere Stornorechnung" }[D.Typ] + " " + D.Title;
-    const hinweis = D.Typ === "Rechnung" ? `Bitte überweisen Sie den Betrag bis zum ${deDate(D.Faellig)} unter Angabe der Rechnungsnummer.`
+    const Z = window.EFZahlungen, konto = f.IBAN && Z && Z.ibanGueltig(f.IBAN);
+    const hinweis = D.Typ === "Rechnung" ? `Bitte überweisen Sie den Betrag bis zum ${deDate(D.Faellig)} unter Angabe der Rechnungsnummer ${D.Title}`
+        + (konto ? ` auf folgendes Konto:\n\nEmpfänger: ${f.Kontoinhaber || f.Inhaber || f.Firma}\nIBAN: ${Z.ibanSchoen(f.IBAN)}${f.BIC ? "\nBIC: " + f.BIC : ""}\nBetrag: ${eur(P.totals(D).brutto)}\nVerwendungszweck: ${D.Title}\n\nAm einfachsten scannen Sie den QR-Code auf der Rechnung mit Ihrer Banking-App – dann ist alles schon ausgefüllt.` : ".")
       : D.Typ === "Angebot" ? `Das Angebot ist gültig bis zum ${deDate(D.Faellig)}.` : "";
     const map = { nr: D.Title, typ: P.titel(D), dokument, hinweis, summe: eur(P.totals(D).brutto), faellig: deDate(D.Faellig),
       datum: deDate(D.Datum), kunde: D.Kunde.Title || "", firma: f.Firma || "", inhaber: f.Inhaber || "" };
@@ -1066,7 +1130,8 @@
     { k: "Telefon", label: "Telefon" }, { k: "Email", label: "E-Mail (auf dem PDF)" }, { k: "Web", label: "Website" },
     { k: "Steuer", label: "Umsatzsteuer", options: [STEUER_KU, STEUER_REG] }, { k: "UstSatz", label: "USt-Satz in % (nur bei Regelbesteuerung)", type: "number", step: "0.1" },
     { k: "Steuernummer", label: "Steuernummer" }, { k: "UstId", label: "USt-IdNr. (falls vorhanden)" },
-    { k: "Bank", label: "Bank" }, { k: "IBAN", label: "IBAN" }, { k: "BIC", label: "BIC" },
+    { k: "Bank", label: "Bank" }, { k: "IBAN", label: "IBAN (für Überweisung und QR-Code auf der Rechnung)" }, { k: "BIC", label: "BIC" },
+    { k: "Kontoinhaber", label: "Kontoinhaber (leer = Inhaber) – muss genau wie bei der Bank lauten" },
     { k: "Nummernpraefix", label: "Nummern-Präfix (leer = RE-2026-0001, „STL“ = STL-RE-2026-0001)" },
     { k: "MailFrom", label: "Absender-Postfach für E-Mails" }, { k: "PdfOrdner", label: "PDF-Ordner in SharePoint" },
     { k: "Zahlungsziel", label: "Zahlungsziel (Tage)", type: "number" }, { k: "AngebotGueltig", label: "Angebote gültig (Tage)", type: "number" },

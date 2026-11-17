@@ -356,3 +356,10 @@ main { min-width: 0; }
 .stwarn { grid-column: 1 / -1; font-size: 12px; line-height: 1.4; padding: 6px 10px; border-radius: 8px; }
 .stwarn.p-warn { background: #FFF7E6; color: #8A4B08; border: 1px solid #F5D39B; }
 .stwarn.p-info { background: var(--surface2); color: var(--text-mid); }
+
+/* Zahlungen abgleichen */
+.tbl td.pos { color: var(--ok); font-weight: 600; }
+.tbl td.warn { color: #B45309; font-weight: 600; }
+.tbl td.muted { color: var(--muted); }
+.tbl .small.neg { color: var(--err); }
+.dropzone { cursor: pointer; }
