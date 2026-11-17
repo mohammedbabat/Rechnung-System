@@ -384,6 +384,7 @@
     view(`
       <div class="head"><h1>Übersicht <span class="muted">· ${esc(f.Firma)}</span></h1><span class="grow"></span>
         ${can("bearbeiten") ? `<a class="btn ghost" href="#/beleg/neu-Angebot">+ Angebot</a><a class="btn primary" href="#/beleg/neu-Rechnung">+ Rechnung</a>` : ""}</div>
+      ${can("bezahlt") ? `<div id="bankLeiste"></div>` : ""}
       <div class="kpis">
         ${kpi("Unbezahlte Rechnungen", eur(sumOf(offen)), offen.length + " Stück", "", "#/rechnungen/unbezahlt")}
         ${kpi("Überfällig", eur(sumOf(ueber)), ueber.length + " Stück", ueber.length ? "warn" : "", "#/rechnungen/ueberfaellig")}
@@ -393,6 +394,7 @@
       ${umsatzCard}
       <div class="card"><h3>Neueste Belege</h3>${belegTable(belege().sort(byDateDesc).slice(0, 8), true)}</div>`);
     setNav("dashboard");
+    if (can("bezahlt")) { renderBankLeiste(); bankPruefen({ still: true }); }
   }
 
   // ---------- Belegliste mit Status-Unterordnern ----------
