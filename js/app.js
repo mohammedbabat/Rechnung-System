@@ -268,6 +268,9 @@
         G.items("Einstellungen"), G.items("Benutzer"), G.checkSchema()]);
       S.kunden = k; S.artikel = a; S.belege = b.map(parseBeleg); S.benutzer = u;
       S.firmen = parseFirmen(e);
+      const bankItem = e.find(x => x.Title === "bank");
+      S.bank = { itemId: bankItem ? bankItem.id : null, d: Object.assign({ url: "", key: "", auto: true }, bankItem ? safeJson(bankItem.Wert, {}) : {}) };
+      if (window.EFBank) window.EFBank.konfigurieren(S.bank.d);
       const gemerkt = store.get("ef_firma");
       S.fk = S.firmen.some(f => f.key === gemerkt) ? gemerkt : (S.firmen.some(f => f.key === S.fk) ? S.fk : "ef");
       S.schemaMissing = missing || [];
@@ -402,6 +405,7 @@
       <input id="q" class="search" placeholder="Nummer oder Kunde …">
       ${!isA && can("bezahlt") ? `<button type="button" class="btn ghost" id="zahlImp" title="Kontoauszug (CSV) einlesen und Zahlungen zuordnen">💶 Zahlungen abgleichen</button>` : ""}
       ${can("bearbeiten") ? `<a class="btn primary" href="#/beleg/neu-${typ}">+ ${isA ? "Angebot" : "Rechnung"}</a>` : ""}</div>
+      ${!isA ? `<div id="bankLeiste"></div>` : ""}
       <div class="tabs">${defs.map(([k, l]) => `<a href="#/${base}/${k}" class="${k === sub ? "active" : ""}">${esc(l)}</a>`).join("")}</div>
       <div class="card" id="lst"></div><div class="small muted sumline" id="sumline"></div>`);
     const draw = () => {
@@ -414,13 +418,87 @@
     };
     $("#q").oninput = draw; draw();
     if ($("#zahlImp")) $("#zahlImp").onclick = () => zahlungenDialog(draw);
+    if (!isA) { renderBankLeiste(); bankPruefen({ still: true }); }
     setNav(base, sub === "alle" ? "" : sub);
   }
 
+
+  // ---------- Bank (über den Gehalt-Monitor): bezahlte Rechnungen automatisch erkennen ----------
+  const BANK_PAUSE = 15 * 60 * 1000;
+  async function bankPruefen({ still = false, force = false } = {}) {
+    const B = window.EFBank, Z = window.EFZahlungen;
+    if (!B || !Z || !S.bank || !B.konfiguriert()) { if (!still) toast("Bank ist noch nicht eingerichtet – Einstellungen → Bankanbindung", "err"); return; }
+    if (!B.angemeldet()) { if (!still) toast("Bitte in den Einstellungen mit dem Gehalt-Monitor-Konto anmelden", "err"); return; }
+    if (S.bankLaeuft) return;
+    const offenAlle = S.belege.filter(b => b.Typ === "Rechnung" && ["Offen", "Versendet"].includes(b.Status));
+    const zuletzt = Number(store.get("ef_bank_last") || 0);
+    if (still && (!offenAlle.length || Date.now() - zuletzt < BANK_PAUSE)) return;
+    S.bankLaeuft = true; renderBankLeiste();
+    const lauf = { am: new Date().toISOString(), gebucht: [], pruefen: [], fehler: "" };
+    try {
+      try { const r = await B.sync(force); const f = Object.values(r.fehler || {}); if (f.length) lauf.fehler = f.join(" · "); }
+      catch (e) { lauf.fehler = e.message; if (e.code === "login") throw e; }
+      store.set("ef_bank_last", String(Date.now()));
+      if (!offenAlle.length) { S.bankLauf = lauf; return; }
+      const fruehestes = offenAlle.map(b => b.Datum || "").filter(Boolean).sort()[0] || today();
+      const ab = new Date(new Date(fruehestes).getTime() - 7 * 86400000).toISOString().slice(0, 10);
+      const eing = await B.eingaenge(ab);
+      const name = b => (b.Kunde && b.Kunde.Title) || "";
+      const offen = offenAlle.map(b => ({ id: b.id, nr: b.Title, betrag: P.totals(b).brutto, kunde: name(b), b }));
+      const bez = S.belege.filter(b => b.Typ === "Rechnung" && b.Status === "Bezahlt").map(b => ({ id: b.id, nr: b.Title, b }));
+      const vs = Z.zuordnen(eing, offen, bez).filter(v => v.art !== "schonBezahlt");
+      const auto = !S.bank.d || S.bank.d.auto !== false;
+      for (const v of vs) {
+        const b = v.beleg.b;
+        // sicher = Nummer + Betrag, Zahlung nicht vor dem Rechnungsdatum, und keine zweite offene Rechnung (andere Firma) mit gleicher Nummer + Betrag
+        const doppelt = offen.filter(o => o.b !== b && Z.nrGefunden(o.nr, `${v.z.zweck} ${v.z.name}`) && Math.abs(o.betrag - v.z.betrag) < 0.005).length;
+        const sicher = v.art === "sicher" && !doppelt && (!b.Datum || v.z.datum >= new Date(new Date(b.Datum).getTime() - 3 * 86400000).toISOString().slice(0, 10));
+        if (sicher && auto && can("bezahlt")) {
+          const upd = { Status: "Bezahlt", BezahltAm: v.z.datum };
+          await G.update("Belege", b.id, upd);
+          Object.assign(b, upd); upsertLocal(b);
+          lauf.gebucht.push(v);
+        } else lauf.pruefen.push(Object.assign(v, sicher ? { art: "sicher" } : {}));
+      }
+      S.bankLauf = lauf;
+      if (lauf.gebucht.length) toast(`🏦 Bezahlt erkannt: ${lauf.gebucht.map(v => `${v.beleg.nr} (${eur(v.z.betrag)}, ${deDate(v.z.datum)})`).join(", ")}`);
+      else if (!still) toast(lauf.pruefen.length ? `🏦 ${lauf.pruefen.length} Zahlung(en) zum Prüfen` : "🏦 Keine neuen Zahlungen für offene Rechnungen");
+      if (lauf.fehler && !still) toast("Bank: " + lauf.fehler, "err");
+    } catch (e) {
+      lauf.fehler = e.message; S.bankLauf = lauf;
+      if (!still || e.code === "login") toast("Bank: " + e.message, "err");
+    } finally {
+      S.bankLaeuft = false;
+      renderBankLeiste();
+      if ((S.bankLauf || {}).gebucht && S.bankLauf.gebucht.length && /^#\/(rechnungen|dashboard)/.test(location.hash || "#/dashboard")) route();
+    }
+  }
+
+  // Kleine Leiste über der Rechnungsliste: Stand der Bank-Prüfung
+  function renderBankLeiste() {
+    const el = $("#bankLeiste");
+    if (!el) return;
+    const B = window.EFBank;
+    if (!B || !S.bank || !B.konfiguriert()) { el.innerHTML = ""; return; }
+    if (!B.angemeldet()) { el.innerHTML = `<div class="bankleiste"><span>🏦 Bank: nicht angemeldet</span><a href="#/einstellungen" class="small">Anmelden</a></div>`; return; }
+    const l = S.bankLauf, zuletzt = Number(store.get("ef_bank_last") || 0);
+    const wann = zuletzt ? new Date(zuletzt).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "noch nie";
+    el.innerHTML = `<div class="bankleiste ${l && l.fehler ? "fehler" : ""}">
+      <span>${S.bankLaeuft ? "⏳ Bank wird geprüft …" : `🏦 Bank geprüft: ${esc(wann)}`}${l && l.gebucht.length ? ` · <strong>${l.gebucht.length} automatisch als bezahlt gebucht</strong>` : ""}${l && l.fehler ? ` · <span class="neg">${esc(l.fehler)}</span>` : ""}</span>
+      <span class="row gap">${l && l.pruefen.length ? `<button type="button" class="btn ok small" id="bankPruef">${l.pruefen.length} zum Prüfen</button>` : ""}
+      <button type="button" class="btn ghost small" id="bankJetzt" ${S.bankLaeuft ? "disabled" : ""}>Jetzt prüfen</button></span></div>`;
+    const j = $("#bankJetzt"); if (j) j.onclick = () => bankPruefen({ force: true });
+    const p = $("#bankPruef"); if (p) p.onclick = () => zahlungenDialog(() => { renderBankLeiste(); route(); },
+      { vorschlaege: S.bankLauf.pruefen, quelle: "Bank (Gehalt-Monitor)", anzahl: S.bankLauf.pruefen.length });
+  }
+
   // ---------- Zahlungen abgleichen: Kontoauszug-CSV → offene Rechnungen ----------
-  function zahlungenDialog(nachher) {
+  function zahlungenDialog(nachher, vorab) {
     const Z = window.EFZahlungen, f = firmaOf(S.fk) || {};
-    modal(`<h2>💶 Zahlungen abgleichen – ${esc(f.Firma || "")}</h2>
+    modal(vorab ? `<h2>🏦 Zahlungen von der Bank prüfen</h2>
+      <p class="small">Diese Zahlungseingänge passen <strong>nicht ganz sicher</strong> zu einer offenen Rechnung (Betrag weicht ab oder die Rechnungsnummer fehlt). Bitte prüfen und anhaken.</p>
+      <div id="zRes"></div>
+      <div class="actions"><span class="grow"></span><button type="button" class="btn ghost" id="zC">Schließen</button><button type="button" class="btn primary hidden" id="zOk">Ausgewählte als bezahlt buchen</button></div>` : `<h2>💶 Zahlungen abgleichen – ${esc(f.Firma || "")}</h2>
       <p class="small">Lade im Online-Banking die <strong>Umsätze als CSV</strong> herunter (z. B. „Export“ → „CSV“ oder „CSV-CAMT“) und zieh die Datei hierher.
         Die App sucht die <strong>Rechnungsnummer</strong> und den <strong>Betrag</strong> und schlägt vor, welche Rechnungen bezahlt sind.</p>
       <label class="dropzone" id="zDrop"><input type="file" id="zFile" accept=".csv,.txt,text/csv" hidden>
@@ -457,11 +535,12 @@
         : `<div class="hfbox">Keine Zahlung passt zu einer offenen Rechnung von ${esc(f.Firma || "")}. Steht die Rechnungsnummer im Verwendungszweck? Ist die richtige Firma oben links gewählt?</div>`}`;
       $("#zOk").classList.toggle("hidden", !buchbar.length);
     };
+    if (vorab) { vorschlaege = vorab.vorschlaege; zeigen(vorab.quelle, vorab.anzahl); }
     const inp = $("#zFile"), drop = $("#zDrop");
-    inp.onchange = () => inp.files[0] && lesen(inp.files[0]);
-    drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
-    drop.ondragleave = () => drop.classList.remove("over");
-    drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) lesen(e.dataTransfer.files[0]); };
+    if (inp) inp.onchange = () => inp.files[0] && lesen(inp.files[0]);
+    if (drop) drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+    if (drop) drop.ondragleave = () => drop.classList.remove("over");
+    if (drop) drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) lesen(e.dataTransfer.files[0]); };
     $("#zOk").onclick = () => {
       const wahl = [...document.querySelectorAll("[data-zi]:checked")].map(c => vorschlaege[Number(c.dataset.zi)]);
       if (!wahl.length) return toast("Bitte mindestens eine Zahlung anhaken", "err");
@@ -472,6 +551,7 @@
           Object.assign(v.beleg.b, upd); upsertLocal(v.beleg.b);
         }
         closeModal(); toast(`${wahl.length} ${wahl.length === 1 ? "Rechnung" : "Rechnungen"} als bezahlt gebucht`);
+        if (S.bankLauf) S.bankLauf.pruefen = S.bankLauf.pruefen.filter(v => !wahl.includes(v));
         if (nachher) nachher();
       });
     };
@@ -1234,6 +1314,65 @@
   }
 
   // ---------- Einstellungen ----------
+  // ---------- Einstellungen: Bankanbindung ----------
+  function bankHtml() {
+    const B = window.EFBank, d = (S.bank || {}).d || {};
+    const an = B && B.angemeldet();
+    return `<div class="card" id="bankCard"><h3>🏦 Bankanbindung (über den Gehalt-Monitor)</h3>
+      <p class="small muted">Deine Bank ist im <strong>Gehalt-Monitor</strong> verbunden. Die Rechnungs-App liest von dort nur die <strong>Zahlungseingänge</strong>
+        und bucht eine Rechnung automatisch als <strong>bezahlt</strong>, wenn Rechnungsnummer und Betrag passen. Unsichere Treffer zeigt sie dir zum Prüfen.</p>
+      <form id="bankF" class="grid">
+        <label>Supabase-Adresse<input name="url" value="${esc(d.url || "")}" placeholder="https://xxxx.supabase.co"></label>
+        <label>Publishable Key<input name="key" value="${esc(d.key || "")}" placeholder="sb_publishable_…"></label>
+        <label class="wide chk"><input type="checkbox" name="auto" ${d.auto !== false ? "checked" : ""}> Sichere Treffer (Nummer + Betrag) automatisch als bezahlt buchen</label>
+        <div class="actions wide"><button class="btn ghost">Speichern</button></div>
+      </form>
+      ${B && B.konfiguriert() ? (an ? `<div class="bankstatus" id="bankStatus"><p class="small">✓ Angemeldet als <strong>${esc(B.email())}</strong> <span class="muted">(nur in diesem Browser)</span></p>
+          <div id="bankBanken" class="small muted">Status wird geladen …</div>
+          <div class="actions"><button type="button" class="btn ghost small" id="bankAb">Abmelden</button><span class="grow"></span><button type="button" class="btn primary small" id="bankTest">Jetzt prüfen</button></div></div>`
+        : `<form id="bankLogin" class="grid"><p class="small wide">Mit deinem <strong>Gehalt-Monitor-Konto</strong> anmelden. Das Passwort wird nicht gespeichert – nur ein Anmelde-Token in diesem Browser.</p>
+          <label>E-Mail<input name="mail" type="email" autocomplete="username" required></label>
+          <label>Passwort<input name="pw" type="password" autocomplete="current-password" required></label>
+          <div class="actions wide"><span class="grow"></span><button class="btn primary">Anmelden</button></div></form>`)
+        : `<p class="small muted">Erst Supabase-Adresse und Publishable Key speichern – die stehen im Gehalt-Monitor in <code>src/lib/supabase.js</code> bzw. <code>src/pages/Bank.jsx</code>.</p>`}
+    </div>`;
+  }
+  function bindBank() {
+    const B = window.EFBank, f = $("#bankF");
+    if (!f || !B) return;
+    f.onsubmit = ev => {
+      ev.preventDefault();
+      const d = { url: f.elements.url.value.trim().replace(/\/+$/, ""), key: f.elements.key.value.trim(), auto: f.elements.auto.checked };
+      if (d.url && !/^https:\/\/[\w.-]+\.supabase\.co$/.test(d.url)) return toast("Die Adresse muss so aussehen: https://xxxx.supabase.co", "err");
+      busy(async () => {
+        const fields = { Title: "bank", Wert: JSON.stringify(d) };
+        if (S.bank.itemId) await G.update("Einstellungen", S.bank.itemId, fields);
+        else S.bank.itemId = (await G.create("Einstellungen", fields)).id;
+        S.bank.d = d; B.konfigurieren(d);
+        toast("Bankanbindung gespeichert"); einstellungen(true);
+      });
+    };
+    const login = $("#bankLogin");
+    if (login) login.onsubmit = ev => {
+      ev.preventDefault();
+      busy(async () => {
+        try { await B.anmelden(login.elements.mail.value.trim(), login.elements.pw.value); }
+        catch (e) { toast(e.message, "err"); return; }
+        toast("Mit dem Gehalt-Monitor verbunden"); einstellungen(true);
+      });
+    };
+    const ab = $("#bankAb"); if (ab) ab.onclick = () => { B.abmelden(); toast("Abgemeldet"); einstellungen(true); };
+    const t = $("#bankTest"); if (t) t.onclick = () => bankPruefen({ force: true }).then(() => einstellungen(true));
+    const ziel = $("#bankBanken");
+    if (ziel) B.status().then(r => {
+      const banken = Object.values(r.banken || {});
+      ziel.innerHTML = banken.length ? banken.map(b => `<div>${b.verbunden ? "✅" : b.abgelaufen ? "⚠️" : "⚪"} <strong>${esc(b.label)}</strong>
+        ${b.verbunden ? `· ${(b.konten || []).map(k => esc(k.iban)).join(", ")} · Freigabe bis ${b.gueltig_bis ? esc(deDate(String(b.gueltig_bis).slice(0, 10))) : "?"}
+          · zuletzt abgerufen ${b.letzter_abruf ? esc(new Date(b.letzter_abruf).toLocaleString("de-DE")) : "noch nie"}`
+          : b.abgelaufen ? "· Freigabe abgelaufen – im Gehalt-Monitor unter „Bank“ neu verbinden" : "· nicht verbunden"}</div>`).join("") : "Keine Bank verbunden – im Gehalt-Monitor unter „Bank“ verbinden.";
+    }).catch(e => { ziel.innerHTML = `<span class="neg">${esc(e.message)}</span>`; });
+  }
+
   function einstellungen(behalteScroll) {
     if (!can("einstellungen") && !can("benutzer")) { location.hash = "#/dashboard"; return; }
     const y = window.scrollY;
@@ -1245,11 +1384,13 @@
         <button class="btn ghost" id="setup">Listen einrichten / prüfen</button>
         <div class="log" id="log" style="margin-top:12px">Bereit.</div></div>` : ""}
       ${can("einstellungen") && !S.setupNeeded ? firmenHtml() : ""}
+      ${can("einstellungen") && !S.setupNeeded ? bankHtml() : ""}
       ${!S.setupNeeded && can("benutzer") ? benutzerHtml() : ""}`);
     if (behalteScroll) window.scrollTo(0, y);
     setNav("einstellungen");
     bindBenutzer();
     bindFirmen();
+    bindBank();
     if (!can("einstellungen")) return;
     $("#setup").onclick = () => {
       const log = $("#log"); log.textContent = "";
@@ -1333,6 +1474,7 @@
       showUser();
       window.addEventListener("hashchange", route);
       route();
+      setTimeout(() => bankPruefen({ still: true }), 1500);
     } catch (e) {
       console.error(e);
       $("#login").classList.remove("hidden");
