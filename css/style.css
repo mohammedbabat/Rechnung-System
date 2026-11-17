@@ -365,3 +365,11 @@ main { min-width: 0; }
 .dropzone { cursor: pointer; }
 .qrinfo { flex-basis: 100%; margin: 6px 0 0; }
 .qrinfo.warn { color: #B45309; }
+
+/* Bank-Leiste über der Rechnungsliste */
+.bankleiste { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; padding: 8px 12px; margin: 0 0 12px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface2); font-size: 13px; }
+.bankleiste.fehler { border-color: #F5C26B; background: #FFFBEB; }
+.bankleiste .neg { color: var(--err); }
+.bankstatus { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+#bankBanken > div { margin: 4px 0; }
