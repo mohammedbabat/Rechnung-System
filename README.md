@@ -72,7 +72,7 @@ python -m http.server 8080
 
 ## Automatische E-Mail-Benachrichtigungen (Rechnungs-Wächter)
 
-Der **Rechnungs-Wächter** läuft als GitHub Action etwa alle 10 Minuten – auch wenn die App geschlossen ist.
+Der **Rechnungs-Wächter** läuft als GitHub Action jede Viertelstunde (:00, :15, :30, :45; GitHub startet teils ein paar Minuten später) – auch wenn die App geschlossen ist.
 Die Bank fragt er tagsüber nur ca. alle 3,5 Stunden neu ab (Banken erlauben ohne dich nur wenige automatische Abrufe pro Tag); Zahlungen, die die App beim Öffnen holt, meldet er beim nächsten Lauf:
 
 1. holt über den **Gehalt-Monitor** die Zahlungseingänge der Bank und bucht passende Rechnungen als **Bezahlt** (Rechnungsnummer + Betrag),
