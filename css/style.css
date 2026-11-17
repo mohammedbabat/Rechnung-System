@@ -363,3 +363,5 @@ main { min-width: 0; }
 .tbl td.muted { color: var(--muted); }
 .tbl .small.neg { color: var(--err); }
 .dropzone { cursor: pointer; }
+.qrinfo { flex-basis: 100%; margin: 6px 0 0; }
+.qrinfo.warn { color: #B45309; }

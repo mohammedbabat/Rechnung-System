@@ -780,6 +780,20 @@
     renderTotals();
   }
 
+  // Warum auf dieser Rechnung (k)ein QR-Code zum Bezahlen steht
+  function qrHinweis() {
+    if (D.Typ !== "Rechnung") return "";
+    const Z = window.EFZahlungen, f = FD(), iban = String(f.IBAN || "").trim();
+    let txt = "";
+    if (!Z) txt = "Kein QR-Code: Die Seite ist noch die alte Version – bitte mit Strg + F5 neu laden.";
+    else if (["Bezahlt", "Storniert"].includes(D.Status)) txt = `Kein QR-Code, weil die Rechnung ${D.Status === "Bezahlt" ? "bezahlt" : "storniert"} ist.`;
+    else if (!iban) txt = `Kein QR-Code: In den Firmendaten von „${esc(f.Firma || "")}“ fehlt die IBAN – <a href="#/einstellungen">Einstellungen → Firmendaten</a>.`;
+    else if (!Z.ibanGueltig(iban)) txt = `Kein QR-Code: Die IBAN „${esc(iban)}“ ist ungültig (Tippfehler?) – <a href="#/einstellungen">Einstellungen → Firmendaten</a>.`;
+    else if (!(P.totals(D).brutto > 0)) txt = "Kein QR-Code, weil der Betrag 0 € ist.";
+    else return `<p class="small muted wide qrinfo">✓ Das PDF enthält einen QR-Code zum Bezahlen (IBAN ${esc(Z.ibanSchoen(iban))}).</p>`;
+    return `<p class="small wide qrinfo warn">ⓘ ${txt}</p>`;
+  }
+
   function renderActions() {
     const a = [], s = D.Status, t = D.Typ;
     if (s === "Entwurf") {
@@ -800,7 +814,7 @@
       a.push('<span class="grow"></span>');
       if (t === "Rechnung" && s !== "Storniert" && can("storno")) a.push(btn("storno", "Stornieren", "danger"));
     }
-    $("#acts").innerHTML = a.join("");
+    $("#acts").innerHTML = a.join("") + qrHinweis();
     $("#acts").onclick = e => { const b = e.target.closest("[data-act]"); if (b && ACT[b.dataset.act]) ACT[b.dataset.act](); };
   }
 
@@ -1204,6 +1218,8 @@
       ev.preventDefault();
       const e = firmaEntry(S.editFk);
       const d = Object.assign({}, e.d, readFields(ev.target, FIRMA_FIELDS));
+      if (d.IBAN && window.EFZahlungen && !window.EFZahlungen.ibanGueltig(d.IBAN)) return toast("Die IBAN ist ungültig – bitte prüfen (Tippfehler?). Ohne gültige IBAN gibt es keinen QR-Code.", "err");
+      if (d.IBAN) d.IBAN = window.EFZahlungen ? window.EFZahlungen.ibanSchoen(d.IBAN) : d.IBAN;
       if (d.Steuer === STEUER_REG && !(Number(d.UstSatz) > 0)) return toast("Bitte einen USt-Satz angeben (z. B. 19).", "err");
       busy(async () => {
         const fields = { Title: itemTitle(e.key), Wert: JSON.stringify(d) };

@@ -136,7 +136,7 @@
     if (zahl) content.push({ text: zahl, margin: [0, 10, 0, 0] });
     // GiroCode: Kunde scannt mit der Banking-App – Empfänger, IBAN, Betrag und Rechnungsnummer sind ausgefüllt
     const Z = (typeof window !== "undefined" && window.EFZahlungen) || null;
-    const qr = b.Typ === "Rechnung" && Z && t.brutto > 0 && b.Status !== "Bezahlt"
+    const qr = b.Typ === "Rechnung" && Z && t.brutto > 0 && !["Bezahlt", "Storniert"].includes(b.Status)
       ? Z.epcPayload({ name: f.Kontoinhaber || f.Inhaber || f.Firma, iban: f.IBAN, bic: f.BIC, betrag: t.brutto, zweck: nr }) : null;
     if (qr) content.push({
       unbreakable: true, margin: [0, 14, 0, 0],
