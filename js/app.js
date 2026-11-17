@@ -347,6 +347,9 @@
       S.kunden = k; S.artikel = a; S.belege = b.map(parseBeleg); S.benutzer = u;
       S.firmen = parseFirmen(e);
       const bankItem = e.find(x => x.Title === "bank");
+      const bnItem = e.find(x => x.Title === "benachrichtigung"), wItem = e.find(x => x.Title === "waechter");
+      S.benach = { itemId: bnItem ? bnItem.id : null, d: Object.assign({ an: "", cc: C.mailFrom || "", ueberfaellig: true, bezahlt: true, aktiv: true }, bnItem ? safeJson(bnItem.Wert, {}) : {}) };
+      S.waechter = wItem ? safeJson(wItem.Wert, {}) : null;
       S.bank = { itemId: bankItem ? bankItem.id : null, d: Object.assign({ url: "", key: "", auto: true }, bankItem ? safeJson(bankItem.Wert, {}) : {}) };
       if (window.EFBank) window.EFBank.konfigurieren(S.bank.d);
       const gemerkt = store.get("ef_firma");
@@ -1420,6 +1423,45 @@
 
   // ---------- Einstellungen ----------
   // ---------- Einstellungen: Bankanbindung ----------
+  // ---------- Einstellungen: E-Mail-Benachrichtigungen (verschickt vom Wächter in GitHub Actions) ----------
+  function benachHtml() {
+    const d = (S.benach || {}).d || {}, w = S.waechter;
+    const zuletzt = w && w.letzterLauf ? new Date(w.letzterLauf).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : null;
+    const alt = w && w.letzterLauf && Date.now() - new Date(w.letzterLauf).getTime() > 6 * 3600000;
+    return `<div class="card" id="benachCard"><h3>📧 Benachrichtigungen per E-Mail</h3>
+      <p class="small muted">Der <strong>Rechnungs-Wächter</strong> läuft automatisch alle 2 Stunden (ca. 7–21 Uhr) – auch wenn die App geschlossen ist.
+        Er prüft die Bank, bucht bezahlte Rechnungen und schickt eine E-Mail, sobald eine Rechnung <strong>überfällig</strong> oder <strong>bezahlt</strong> ist (jede Meldung nur einmal).</p>
+      <form id="benachF" class="grid">
+        <label>An<input name="an" value="${esc(d.an || "")}" placeholder="name@beispiel.de"></label>
+        <label>CC<input name="cc" value="${esc(d.cc || "")}" placeholder="optional, mehrere mit Komma"></label>
+        <label class="chk"><input type="checkbox" name="ueberfaellig" ${d.ueberfaellig !== false ? "checked" : ""}> Wenn eine Rechnung überfällig wird</label>
+        <label class="chk"><input type="checkbox" name="bezahlt" ${d.bezahlt !== false ? "checked" : ""}> Wenn eine Rechnung bezahlt ist</label>
+        <label class="chk wide"><input type="checkbox" name="aktiv" ${d.aktiv !== false ? "checked" : ""}> E-Mails senden (aus = nur prüfen und buchen)</label>
+        <div class="actions wide"><span class="small ${!w ? "muted" : alt ? "neg" : "muted"}">${!w ? "Der Wächter ist noch nie gelaufen – Einrichtung siehe README auf GitHub (Abschnitt „Automatische E-Mail-Benachrichtigungen“)."
+          : `Letzter Lauf: ${esc(zuletzt)}${w.letzterStand ? ` · ${w.letzterStand.gebucht || 0} gebucht · ${w.letzterStand.gemeldet || 0} gemeldet${w.letzterStand.bank ? "" : " · ohne Bankprüfung"}` : ""}${alt ? " – länger nicht gelaufen, GitHub Actions prüfen" : ""}`}</span>
+          <span class="grow"></span><button class="btn ghost">Speichern</button></div>
+      </form></div>`;
+  }
+  function bindBenach() {
+    const f = $("#benachF");
+    if (!f) return;
+    f.onsubmit = ev => {
+      ev.preventDefault();
+      const liste = v => v.split(/[;,\s]+/).map(x => x.trim()).filter(Boolean);
+      const an = liste(f.elements.an.value), cc = liste(f.elements.cc.value);
+      const falsch = [...an, ...cc].filter(x => !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(x));
+      if (falsch.length) return toast("Ungültige E-Mail-Adresse: " + falsch.join(", "), "err");
+      if (!an.length) return toast("Bitte mindestens einen Empfänger eintragen", "err");
+      const d = { an: an.join(", "), cc: cc.join(", "), ueberfaellig: f.elements.ueberfaellig.checked, bezahlt: f.elements.bezahlt.checked, aktiv: f.elements.aktiv.checked };
+      busy(async () => {
+        const fields = { Title: "benachrichtigung", Wert: JSON.stringify(d) };
+        if (S.benach.itemId) await G.update("Einstellungen", S.benach.itemId, fields);
+        else S.benach.itemId = (await G.create("Einstellungen", fields)).id;
+        S.benach.d = d; toast("Benachrichtigungen gespeichert"); einstellungen(true);
+      });
+    };
+  }
+
   function bankHtml() {
     const B = window.EFBank, d = (S.bank || {}).d || {};
     const an = B && B.angemeldet();
@@ -1490,12 +1532,14 @@
         <div class="log" id="log" style="margin-top:12px">Bereit.</div></div>` : ""}
       ${can("einstellungen") && !S.setupNeeded ? firmenHtml() : ""}
       ${can("einstellungen") && !S.setupNeeded ? bankHtml() : ""}
+      ${can("einstellungen") && !S.setupNeeded ? benachHtml() : ""}
       ${!S.setupNeeded && can("benutzer") ? benutzerHtml() : ""}`);
     if (behalteScroll) window.scrollTo(0, y);
     setNav("einstellungen");
     bindBenutzer();
     bindFirmen();
     bindBank();
+    bindBenach();
     if (!can("einstellungen")) return;
     $("#setup").onclick = () => {
       const log = $("#log"); log.textContent = "";

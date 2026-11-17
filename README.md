@@ -70,6 +70,33 @@ python -m http.server 8080
 ```
 → `http://localhost:8080/` (ist als Redirect-URI bereits eingetragen).
 
+## Automatische E-Mail-Benachrichtigungen (Rechnungs-Wächter)
+
+Der **Rechnungs-Wächter** läuft als GitHub Action alle 2 Stunden (ca. 7–21 Uhr) – auch wenn die App geschlossen ist:
+
+1. holt über den **Gehalt-Monitor** die Zahlungseingänge der Bank und bucht passende Rechnungen als **Bezahlt** (Rechnungsnummer + Betrag),
+2. schickt eine **E-Mail**, sobald eine Rechnung **überfällig** oder **bezahlt** ist – jede Meldung nur einmal.
+
+Empfänger, CC und Schalter: **App → Einstellungen → 📧 Benachrichtigungen**.
+
+### Einmalige Einrichtung
+
+1. **Mail.Send erlauben:** `setup/Setup-Benachrichtigung.ps1` in PowerShell ausführen (Gerätecode-Anmeldung als Administrator).
+   Das Skript erteilt der App die Anwendungsberechtigung **Mail.Send** und beschränkt das Senden auf `rechnung@ein-facher.de`.
+   *Alternativ im Portal:* Entra ID → App-Registrierungen → Rechnungs-App → API-Berechtigungen → Microsoft Graph → **Anwendungsberechtigungen** → `Mail.Send` → Administratorzustimmung erteilen.
+2. **Secrets in GitHub anlegen:** Repository → *Settings* → *Secrets and variables* → *Actions* → *New repository secret*
+
+   | Name | Wert |
+   |---|---|
+   | `EF_CLIENT_SECRET` | geheimer Schlüssel (Wert) der App-Registrierung – derselbe wie für die Setup-Skripte |
+   | `SB_EMAIL` | E-Mail des Gehalt-Monitor-Kontos (für die Bankprüfung, optional) |
+   | `SB_PASSWORD` | Passwort des Gehalt-Monitor-Kontos (optional) |
+
+3. **Testen:** *Actions* → *Rechnungs-Wächter* → *Run workflow* (mit Haken „Trockenlauf“ wird nichts gebucht und keine E-Mail gesendet).
+
+Beim **ersten Lauf** werden bereits bezahlte Rechnungen nur gemerkt (keine E-Mail); überfällige werden gemeldet.
+Das Protokoll in GitHub Actions ist öffentlich und enthält deshalb nur Zahlen – keine Namen, Beträge oder Rechnungsnummern.
+
 ## Rechtliches (kurz)
 
 - Pflichtangaben nach § 14 UStG sind abgedeckt: Name/Anschrift beider Seiten, Steuernummer oder USt-IdNr., Datum, fortlaufende Nummer, Menge und Art der Leistung, Leistungszeitpunkt, Entgelt, Hinweis auf § 19 UStG.
