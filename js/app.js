@@ -443,6 +443,7 @@
       const fruehestes = offenAlle.map(b => b.Datum || "").filter(Boolean).sort()[0] || today();
       const ab = new Date(new Date(fruehestes).getTime() - 7 * 86400000).toISOString().slice(0, 10);
       const eing = await B.eingaenge(ab);
+      lauf.gelesen = eing.length; lauf.ab = ab; lauf.offen = offenAlle.length;
       const name = b => (b.Kunde && b.Kunde.Title) || "";
       const offen = offenAlle.map(b => ({ id: b.id, nr: b.Title, betrag: P.totals(b).brutto, kunde: name(b), b }));
       const bez = S.belege.filter(b => b.Typ === "Rechnung" && b.Status === "Bezahlt").map(b => ({ id: b.id, nr: b.Title, b }));
@@ -462,7 +463,8 @@
       }
       S.bankLauf = lauf;
       if (lauf.gebucht.length) toast(`🏦 Bezahlt erkannt: ${lauf.gebucht.map(v => `${v.beleg.nr} (${eur(v.z.betrag)}, ${deDate(v.z.datum)})`).join(", ")}`);
-      else if (!still) toast(lauf.pruefen.length ? `🏦 ${lauf.pruefen.length} Zahlung(en) zum Prüfen` : "🏦 Keine neuen Zahlungen für offene Rechnungen");
+      else if (!still) toast(lauf.pruefen.length ? `🏦 ${lauf.pruefen.length} Zahlung(en) zum Prüfen`
+        : `🏦 ${eing.length} Zahlungseingänge seit ${deDate(ab)} gelesen – keiner passt zu den ${offenAlle.length} offenen Rechnungen`);
       if (lauf.fehler && !still) toast("Bank: " + lauf.fehler, "err");
     } catch (e) {
       lauf.fehler = e.message; S.bankLauf = lauf;
@@ -479,12 +481,15 @@
     const el = $("#bankLeiste");
     if (!el) return;
     const B = window.EFBank;
-    if (!B || !S.bank || !B.konfiguriert()) { el.innerHTML = ""; return; }
+    if (!B || !S.bank || !B.konfiguriert()) {
+      el.innerHTML = can("einstellungen") ? `<div class="bankleiste fehler"><span>🏦 Bank ist noch nicht eingerichtet – bezahlte Rechnungen werden nicht automatisch erkannt.</span><a href="#/einstellungen" class="small">Einrichten</a></div>` : "";
+      return;
+    }
     if (!B.angemeldet()) { el.innerHTML = `<div class="bankleiste"><span>🏦 Bank: nicht angemeldet</span><a href="#/einstellungen" class="small">Anmelden</a></div>`; return; }
     const l = S.bankLauf, zuletzt = Number(store.get("ef_bank_last") || 0);
     const wann = zuletzt ? new Date(zuletzt).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "noch nie";
     el.innerHTML = `<div class="bankleiste ${l && l.fehler ? "fehler" : ""}">
-      <span>${S.bankLaeuft ? "⏳ Bank wird geprüft …" : `🏦 Bank geprüft: ${esc(wann)}`}${l && l.gebucht.length ? ` · <strong>${l.gebucht.length} automatisch als bezahlt gebucht</strong>` : ""}${l && l.fehler ? ` · <span class="neg">${esc(l.fehler)}</span>` : ""}</span>
+      <span>${S.bankLaeuft ? "⏳ Bank wird geprüft …" : `🏦 Bank geprüft: ${esc(wann)}`}${l && l.gelesen != null && !S.bankLaeuft ? ` <span class="muted">(${l.gelesen} Eingänge seit ${esc(deDate(l.ab))}, ${l.offen} offene Rechnungen)</span>` : ""}${l && l.gebucht.length ? ` · <strong>${l.gebucht.length} automatisch als bezahlt gebucht</strong>` : ""}${l && l.fehler ? ` · <span class="neg">${esc(l.fehler)}</span>` : ""}</span>
       <span class="row gap">${l && l.pruefen.length ? `<button type="button" class="btn ok small" id="bankPruef">${l.pruefen.length} zum Prüfen</button>` : ""}
       <button type="button" class="btn ghost small" id="bankJetzt" ${S.bankLaeuft ? "disabled" : ""}>Jetzt prüfen</button></span></div>`;
     const j = $("#bankJetzt"); if (j) j.onclick = () => bankPruefen({ force: true });
