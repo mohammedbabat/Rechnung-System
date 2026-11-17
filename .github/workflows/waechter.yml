@@ -1,0 +1,39 @@
+# Ein-Facher Rechnungen – Wächter
+# Prüft automatisch (auch wenn die App zu ist): Zahlungseingänge über die Bank,
+# überfällige und bezahlte Rechnungen – und schickt dazu eine E-Mail.
+# Einrichtung: README → "Automatische E-Mail-Benachrichtigungen".
+name: Rechnungs-Wächter
+
+on:
+  schedule:
+    # alle 2 Stunden zwischen ca. 7 und 21 Uhr deutscher Zeit (Zeiten in UTC)
+    - cron: "17 5-19/2 * * *"
+  workflow_dispatch:
+    inputs:
+      trocken:
+        description: "Trockenlauf (nichts buchen, keine E-Mail)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: waechter
+  cancel-in-progress: false
+
+jobs:
+  pruefen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Rechnungen prüfen und benachrichtigen
+        env:
+          EF_CLIENT_SECRET: ${{ secrets.EF_CLIENT_SECRET }}
+          SB_EMAIL: ${{ secrets.SB_EMAIL }}
+          SB_PASSWORD: ${{ secrets.SB_PASSWORD }}
+        run: node tools/waechter.mjs ${{ inputs.trocken && '--trocken' || '' }}
