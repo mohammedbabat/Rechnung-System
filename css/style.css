@@ -389,3 +389,15 @@ main { min-width: 0; }
 .klappalle .link:hover { text-decoration: underline; }
 #lst > .card, #artGr > .card { margin-bottom: 12px; }
 .card.klapp.zu { padding-top: 14px; padding-bottom: 14px; }
+
+/* Seitenmenü: Untermenüs auf-/zuklappen */
+.navgrp { display: flex; align-items: center; gap: 2px; }
+.navgrp > a { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.navtog { flex: 0 0 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; position: relative; color: inherit; }
+.navtog::after { content: ""; position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; margin: -6px 0 0 -4px;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); opacity: .6; transition: transform .15s; }
+.navgrp.auf .navtog::after { transform: rotate(45deg); margin-top: -6px; }
+.navtog:hover { background: rgba(123,47,190,.08); }
+.navtog:hover::after { opacity: 1; }
+.navtog:focus-visible { outline: 2px solid var(--accent); }
+@media (max-width: 860px) { .navtog { display: none; } }
